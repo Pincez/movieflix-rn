@@ -1,0 +1,439 @@
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://ap.pincez.xyz';
+
+export { API_URL };
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error((data as any)?.error || `Request failed: ${res.status}`);
+  return data as T;
+}
+
+// ============================================================
+// Types
+// ============================================================
+export type MediaType = 'movie' | 'tv';
+
+export interface MediaItem {
+  id?: number;
+  tmdb_id?: number;
+  title?: string;
+  name?: string;
+  poster?: string;
+  poster_path?: string;
+  backdrop?: string;
+  backdrop_path?: string;
+  overview?: string;
+  rating?: number;
+  vote_average?: number;
+  year?: string | number;
+  release_date?: string;
+  first_air_date?: string;
+  runtime?: number;
+  number_of_seasons?: number;
+  number_of_episodes?: number;
+  seasons?: Array<{
+    season_number: number;
+    episode_count?: number;
+    name?: string;
+    air_date?: string;
+    poster_path?: string;
+  }>;
+  genres?: Array<{ id: number; name: string } | string>;
+  media_type?: MediaType;
+  type?: MediaType;
+  [key: string]: any;
+}
+
+export interface MovieHash {
+  id?: number;
+  hash: string;
+  info_hash?: string;
+  quality: string;
+  size_mb: number;
+  seeders: number;
+  is_cached: number;
+  source?: string;
+  isSeasonPack?: boolean;
+  episode_count?: number;
+  season?: number;
+  season_number?: number;
+  episode_number?: number;
+  filename?: string;
+  created_at?: string;
+  name?: string;
+  mimetype?: string;
+  size?: number;
+  isTorrentFile?: boolean;
+}
+
+export interface SeasonPack {
+  season_number: number;
+  packs: Array<{
+    id?: number;
+    info_hash: string;
+    quality: string;
+    size_mb: number;
+    seeders: number;
+    is_cached: number;
+    episode_count: number;
+  }>;
+}
+
+export interface Episode {
+  episode_number: number;
+  season_number: number;
+  name?: string;
+  title?: string;
+  overview?: string;
+  still_path?: string;
+  air_date?: string;
+  runtime?: number;
+}
+
+export interface QualityGroup {
+  quality: string;
+  hashes: MovieHash[];
+  totalHashes: number;
+  playableHashes: number;
+}
+
+export interface StreamResult {
+  success: boolean;
+  streamUrl?: string;
+  quality?: string;
+  size?: number;
+  fileSize?: number;
+  seeders?: number;
+  filename?: string;
+  hash?: string;
+  torrentId?: number;
+  status?: string;
+  message?: string;
+  error?: string;
+  expiresIn?: number;
+  expiresAt?: string;
+  isProxied?: boolean;
+  mediaInfo?: {
+    audioCodec?: string;
+    videoCodec?: string;
+    container?: string;
+    audioCompatible?: boolean;
+    videoCompatible?: boolean;
+    fullyCompatible?: boolean;
+  } | null;
+  warning?: { type?: string; codec?: string; message?: string; suggestion?: string } | null;
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+export function pickList<T = MediaItem>(res: any): T[] {
+  if (!res) return [];
+  return (
+    res.results ||
+    res.movies ||
+    res.tv_shows ||
+    res.items ||
+    (Array.isArray(res) ? res : [])
+  );
+}
+
+export function groupHashesByQuality(hashes: MovieHash[]): QualityGroup[] {
+  const map = new Map<string, MovieHash[]>();
+  for (const h of hashes) {
+    const key = h.quality || 'unknown';
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(h);
+  }
+  const groups: QualityGroup[] = [];
+  for (const [quality, list] of map.entries()) {
+    groups.push({
+      quality,
+      hashes: list,
+      totalHashes: list.length,
+      playableHashes: list.filter((h) => h.seeders > 0 || h.is_cached === 1).length,
+    });
+  }
+  const order = ['2160p', '1080p', '720p', '480p', '360p'];
+  groups.sort((a, b) => {
+    const ai = order.indexOf(a.quality);
+    const bi = order.indexOf(b.quality);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+  return groups;
+}
+
+export function sortHashesByScore(hashes: MovieHash[]): MovieHash[] {
+  return [...hashes].sort((a, b) => {
+    const aScore = (a.is_cached ? 1000 : 0) + (a.seeders || 0);
+    const bScore = (b.is_cached ? 1000 : 0) + (b.seeders || 0);
+    return bScore - aScore;
+  });
+}
+
+export interface ListItem {
+  content_id: number;
+  content_type: MediaType;
+  season_number?: number | null;
+  episode_number?: number | null;
+  added_at?: string;
+}
+
+export async function hydrateListItems(items: ListItem[]): Promise<MediaItem[]> {
+  const results = await Promise.all(
+    items.map(async (it) => {
+      try {
+        const segment = it.content_type === 'tv' ? 'tv' : 'movie';
+        const res = await request<any>(`/api/${segment}/${it.content_id}`);
+        const payload = res?.movie || res?.tv_show || res?.data || res;
+        if (!payload) return null;
+        return {
+          ...payload,
+          id: payload.tmdb_id ?? payload.id ?? it.content_id,
+          tmdb_id: payload.tmdb_id ?? payload.id ?? it.content_id,
+          type: it.content_type,
+        } as MediaItem;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return results.filter(Boolean) as MediaItem[];
+}
+
+// ============================================================
+// API
+// ============================================================
+export const api = {
+  // ---------------- Home / lists ----------------
+  trending: () => request<{ success: boolean; results: MediaItem[] }>('/api/trending'),
+  movies: (page = 1) =>
+    request<{ success: boolean; movies: MediaItem[]; total_pages?: number }>(
+      `/api/movies?page=${page}&type=popular`,
+    ),
+  series: (page = 1) =>
+    request<{ success: boolean; tv_shows: MediaItem[]; total_pages?: number }>(
+      `/api/tv-shows?page=${page}&type=popular`,
+    ),
+  search: (q: string, page = 1) =>
+    request<{ success: boolean; results: MediaItem[] }>(
+      `/api/search?q=${encodeURIComponent(q)}&page=${page}`,
+    ),
+
+  // ---------------- Detail ----------------
+  detail: async (type: MediaType, id: string | number): Promise<MediaItem> => {
+    const segment = type === 'tv' ? 'tv' : 'movie';
+    const res = await request<any>(`/api/${segment}/${id}`);
+    const payload = res?.movie || res?.tv_show || res?.data || res;
+    if (payload && typeof payload === 'object' && (payload.id || payload.tmdb_id)) {
+      return payload;
+    }
+    throw new Error('Detail not available');
+  },
+
+  // ---------------- Movie hashes ----------------
+  movieHashes: async (tmdbId: number | string): Promise<MovieHash[]> => {
+    const res = await request<{ success: boolean; hashes: any[] }>(
+      `/api/admin/movie/hashes-legacy/${tmdbId}`,
+    );
+    return (res?.hashes || []).map((h) => ({
+      id: h.id,
+      hash: h.info_hash || h.hash,
+      info_hash: h.info_hash,
+      quality: h.quality || '1080p',
+      size_mb: h.size_mb || 0,
+      seeders: h.seeders || 0,
+      is_cached: h.is_cached || 0,
+      source: 'd1',
+    }));
+  },
+
+  // ---------------- TV season packs ----------------
+  tvSeasonPacks: (tmdbId: number | string) =>
+    request<{ success: boolean; tmdb_id: number; seasons: SeasonPack[]; total_packs?: number }>(
+      `/api/tv/season-packs/${tmdbId}`,
+    ),
+
+  tvSeasonEpisodes: async (tmdbId: number | string, season: number): Promise<Episode[]> => {
+    const res = await request<{ episodes?: Episode[] }>(
+      `/api/tv/${tmdbId}/season/${season}`,
+    );
+    return res?.episodes || [];
+  },
+
+  tvEpisodeHashes: async (tmdbId: number | string): Promise<MovieHash[]> => {
+    try {
+      const res = await request<{ success: boolean; hashes: any[] }>(
+        `/api/admin/tv/hashes?tmdb_id=${tmdbId}&limit=500`,
+      );
+      const raw = res?.hashes || [];
+      return raw.map((h: any) => ({
+        id: h.id,
+        hash: h.info_hash || h.hash,
+        info_hash: h.info_hash,
+        quality: h.quality || '1080p',
+        size_mb: h.size_mb || 0,
+        seeders: h.seeders || 0,
+        is_cached: h.is_cached || 0,
+        season: h.season_number,
+        season_number: h.season_number,
+        episode_number: h.episode_number,
+        episode_count: h.episode_count,
+        filename: h.filename,
+        source: 'd1',
+      }));
+    } catch {
+      return [];
+    }
+  },
+
+  // ---------------- Torrent files (season packs unzipped) ----------------
+  torrentFiles: async (hash: string): Promise<MovieHash[]> => {
+    try {
+      const res = await request<{ success: boolean; files: any[]; name?: string; size?: number }>(
+        `/api/torrent/files?hash=${encodeURIComponent(hash)}`,
+      );
+      return (res?.files || []).map((f: any) => ({
+        id: f.id,
+        hash,
+        quality: '',
+        size_mb: f.size_mb || 0,
+        seeders: 0,
+        is_cached: 1,
+        name: f.name,
+        mimetype: f.mimetype,
+        size: f.size,
+        isTorrentFile: true,
+      } as MovieHash));
+    } catch {
+      return [];
+    }
+  },
+
+  // ---------------- Credits / similar / videos ----------------
+  movieCredits: (id: number | string) =>
+    request<{ cast?: any[]; crew?: any[] }>(`/api/movie/${id}/credits`),
+  movieSimilar: (id: number | string) =>
+    request<{ results?: MediaItem[] }>(`/api/movie/${id}/similar`),
+  movieVideos: (id: number | string) =>
+    request<{ videos?: any[] }>(`/api/movie/${id}/videos`),
+  tvCredits: (id: number | string) =>
+    request<{ cast?: any[]; crew?: any[] }>(`/api/tv/${id}/credits`),
+  tvSimilar: (id: number | string) =>
+    request<{ results?: MediaItem[] }>(`/api/tv/${id}/similar`),
+  tvVideos: (id: number | string) =>
+    request<{ videos?: any[] }>(`/api/tv/${id}/videos`),
+
+  // ---------------- Streaming ----------------
+  streamMovie: async (id: number | string, quality = '1080p', hash?: string): Promise<StreamResult> => {
+    if (hash) {
+      try {
+        const res = await request<StreamResult>(`/api/stream/hash?hash=${hash}&type=movie&force=true`);
+        if (res?.streamUrl) return res;
+      } catch (e) {
+        console.warn('hash stream failed, falling back', e);
+      }
+    }
+    return request<StreamResult>(`/api/stream/movie/${id}?quality=${quality}`);
+  },
+
+  streamTV: async (
+    id: number | string,
+    season: number,
+    episode: number,
+    quality = '1080p',
+    hash?: string,
+  ): Promise<StreamResult> => {
+    if (hash) {
+      try {
+        const res = await request<StreamResult>(`/api/stream/hash?hash=${hash}&type=tv&force=true`);
+        if (res?.streamUrl) return res;
+      } catch (e) {
+        console.warn('hash stream failed, falling back', e);
+      }
+    }
+    return request<StreamResult>(
+      `/api/stream/tv/${id}/season/${season}/episode/${episode}?quality=${quality}`,
+    );
+  },
+
+  // Stream a specific file inside a season pack
+  streamTorrentFile: (
+    hash: string,
+    fileId: number | string,
+    quality = '1080p',
+  ) =>
+    request<StreamResult>(
+      `/api/stream/hash?hash=${encodeURIComponent(hash)}&type=tv&force=true&file_id=${fileId}&quality=${quality}`,
+    ),
+
+  // ---------------- User lists ----------------
+  watchlist: (headers: Record<string, string>) =>
+    request<{ success: boolean; watchlist: MediaItem[] }>('/api/watchlist', { headers }),
+  favorites: (headers: Record<string, string>) =>
+    request<{ success: boolean; favorites: MediaItem[] }>('/api/favorites', { headers }),
+  toggleWatchlist: (
+    contentId: number,
+    inList: boolean,
+    contentType: MediaType,
+    headers: Record<string, string>,
+  ) =>
+    request<{ success: boolean }>(`/api/watchlist`, {
+      method: inList ? 'DELETE' : 'POST',
+      headers,
+      body: JSON.stringify({ contentId, contentType }),
+    }),
+  toggleFavorites: (
+    contentId: number,
+    inList: boolean,
+    contentType: MediaType,
+    headers: Record<string, string>,
+  ) =>
+    request<{ success: boolean }>(`/api/favorites`, {
+      method: inList ? 'DELETE' : 'POST',
+      headers,
+      body: JSON.stringify({ contentId, contentType }),
+    }),
+
+  // ---------------- Lists ----------------
+  getWatchlist: (headers: Record<string, string>) =>
+    request<{ success: boolean; watchlist: ListItem[] }>('/api/watchlist', { headers }),
+
+  getFavorites: (headers: Record<string, string>) =>
+    request<{ success: boolean; favorites: ListItem[] }>('/api/favorites', { headers }),
+
+  addToWatchlist: (contentId: number, contentType: MediaType, headers: Record<string, string>) =>
+    request<{ success: boolean }>('/api/watchlist', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ contentId, contentType }),
+    }),
+
+  removeFromWatchlist: (contentId: number, contentType: MediaType, headers: Record<string, string>) =>
+    request<{ success: boolean }>('/api/watchlist', {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({ contentId, contentType }),
+    }),
+
+  addToFavorites: (contentId: number, contentType: MediaType, headers: Record<string, string>) =>
+    request<{ success: boolean }>('/api/favorites', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ contentId, contentType }),
+    }),
+
+  removeFromFavorites: (contentId: number, contentType: MediaType, headers: Record<string, string>) =>
+    request<{ success: boolean }>('/api/favorites', {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({ contentId, contentType }),
+    }),
+};

@@ -1,0 +1,115 @@
+import { useEffect, useRef } from "react";
+import { Animated, Easing, StyleSheet } from "react-native";
+import { router } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
+import Mark from "../assets/brand/mark.svg";
+
+const BG = "#05070a";
+
+// --- Konami-style timing ---
+// Total: 4000ms of on-screen time before we hand off to the app.
+const SCALE_IN_MS   = 1800;  // logo grows from 0.8 to 1.0
+const FADE_IN_MS    = 1200;  // logo fades from transparent to solid
+const HOLD_MS       = 3500;  // the classic "hold" after the logo settles
+const FADE_OUT_MS   = 700;   // whole screen fades out
+
+export default function SplashIndex() {
+  const scale       = useRef(new Animated.Value(0.8)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const glowOpacity = useRef(new Animated.Value(0)).current;
+  const containerOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    // 1. Logo scales up and fades in simultaneously.
+    Animated.parallel([
+      Animated.timing(scale, {
+        toValue: 1,
+        duration: SCALE_IN_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(logoOpacity, {
+        toValue: 1,
+        duration: FADE_IN_MS,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      // 2. Once settled, pulse the glow briefly for that "power on" feel.
+      Animated.sequence([
+        Animated.timing(glowOpacity, {
+          toValue: 0.55,
+          duration: 320,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowOpacity, {
+          toValue: 0.18,
+          duration: 420,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]).start();
+    });
+
+    // 3. Hide the native splash right after our JS splash is painted.
+    const hideNative = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, 50);
+
+    // 4. After the full timeline, fade the screen out and go to the app.
+    const total = SCALE_IN_MS + HOLD_MS;
+    const proceed = setTimeout(() => {
+      Animated.timing(containerOpacity, {
+        toValue: 0,
+        duration: FADE_OUT_MS,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => {
+        router.replace("/(tabs)");
+      });
+    }, total);
+
+    return () => {
+      clearTimeout(hideNative);
+      clearTimeout(proceed);
+    };
+  }, [scale, logoOpacity, glowOpacity, containerOpacity]);
+
+  return (
+    <Animated.View style={[styles.container, { opacity: containerOpacity }]}>
+      {/* Soft radial glow behind the logo — fades in during the hold */}
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.glow, { opacity: glowOpacity }]}
+      />
+
+      <Animated.View
+        style={{
+          opacity: logoOpacity,
+          transform: [{ scale }],
+        }}
+      >
+        <Mark width={200} height={200} />
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: BG,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  glow: {
+    position: "absolute",
+    width: 380,
+    height: 380,
+    borderRadius: 190,
+    backgroundColor: "#3B82F6",
+    // Blur isn't available in RN StyleSheet without a package,
+    // so we fake the "glow" with a low-opacity filled circle.
+  },
+});

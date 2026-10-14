@@ -1,0 +1,217 @@
+import { useEffect, useState } from "react";
+import { View, Text, Pressable, ActivityIndicator, useWindowDimensions } from "react-native";
+import { useVideoPlayer, VideoView } from "expo-video";
+import { Ionicons } from "@expo/vector-icons";
+import { router, useLocalSearchParams } from "expo-router";
+import { useQuery } from "@tanstack/react-query";
+import { api, MediaType, StreamResult } from "../../src/services/api";
+import {
+  getLocalVideoUri,
+  useDownloadsStore,
+  loadAllDownloads,
+} from "../../src/services/downloads";
+
+const QUALITIES = ["2160p", "1080p", "720p", "480p"] as const;
+
+async function fetchStream(
+  type: MediaType,
+  id: string,
+  quality: string,
+  hash?: string,
+  fileId?: string,
+  season?: number,
+  episode?: number,
+): Promise<StreamResult> {
+  if (fileId && hash) return api.streamTorrentFile(hash, fileId, quality);
+  if (type === "tv") return api.streamTV(id, season ?? 1, episode ?? 1, quality, hash);
+  return api.streamMovie(id, quality, hash);
+}
+
+export default function WatchScreen() {
+  const params = useLocalSearchParams<{
+    id: string;
+    type?: MediaType;
+    quality?: string;
+    hash?: string;
+    file_id?: string;
+    season?: string;
+    episode?: string;
+    localId?: string;
+  }>();
+
+  const id = params.id;
+  const type: MediaType = (params.type as MediaType) || "movie";
+  const season = params.season ? Number(params.season) : 1;
+  const episode = params.episode ? Number(params.episode) : 1;
+
+  const { width } = useWindowDimensions();
+  const [quality, setQuality] = useState<string>(params.quality || "1080p");
+  const [localUri, setLocalUri] = useState<string | null>(null);
+  const [checkingLocal, setCheckingLocal] = useState(true);
+
+  const items = useDownloadsStore((s) => s.items);
+  const setItems = useDownloadsStore((s) => s.setItems);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        if (items.length === 0) {
+          const list = await loadAllDownloads();
+          setItems(list);
+        }
+
+        if (params.localId) {
+          const match = items.find((x) => x.id === params.localId);
+          if (match?.localUri) {
+            setLocalUri(match.localUri);
+            setCheckingLocal(false);
+            return;
+          }
+        }
+
+        if (params.hash) {
+          const uri = await getLocalVideoUri(
+            params.hash,
+            params.file_id ? Number(params.file_id) : undefined,
+          );
+          if (uri) {
+            setLocalUri(uri);
+            setCheckingLocal(false);
+            return;
+          }
+        }
+
+        const anyLocal = items.find(
+          (x) =>
+            x.tmdbId === Number(id) &&
+            x.mediaType === type &&
+            x.status === "completed" &&
+            (type === "movie" || (x.season === season && x.episode === episode)),
+        );
+        if (anyLocal?.localUri) {
+          setLocalUri(anyLocal.localUri);
+          setCheckingLocal(false);
+          return;
+        }
+      } catch (e) {
+        console.warn("local check failed", e);
+      }
+      setCheckingLocal(false);
+    })();
+  }, [params.localId, params.hash, params.file_id, id, type, season, episode]);
+
+  console.log("[watch] params", {
+    id,
+    type,
+    quality,
+    hash: params.hash,
+    file_id: params.file_id,
+    season,
+    episode,
+  });
+
+  const streamQuery = useQuery({
+    queryKey: ["stream", type, id, quality, params.hash, params.file_id, season, episode],
+    queryFn: () => fetchStream(type, id, quality, params.hash, params.file_id, season, episode),
+    enabled: !!id && !localUri,
+    staleTime: 0,
+    retry: 0,
+  });
+
+  const streamUrl = localUri || streamQuery.data?.streamUrl;
+  const isOffline = !!localUri;
+  const errorMsg = (streamQuery.error as any)?.message || streamQuery.data?.error;
+
+  const player = useVideoPlayer(streamUrl || null, (p) => {
+    p.loop = false;
+    p.play();
+  });
+
+  useEffect(() => {
+    if (!streamUrl) return;
+    try {
+      player.replaceAsync(streamUrl);
+      player.play();
+    } catch (e) {
+      console.warn("player replace failed", e);
+    }
+  }, [streamUrl, player]);
+
+  const titleLabel = type === "tv"
+    ? `S${season}E${episode}`
+    : streamQuery.data?.filename || "Now Playing";
+
+  const isLoading = checkingLocal || (!localUri && streamQuery.isLoading);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: "#000" }}>
+      <View style={{ paddingTop: 48, paddingHorizontal: 16, paddingBottom: 12, flexDirection: "row", alignItems: "center", backgroundColor: "#000" }}>
+        <Pressable onPress={() => (router.canGoBack?.() ? router.back() : router.replace("/"))} hitSlop={12}>
+          <Ionicons name="close" size={26} color="#fff" />
+        </Pressable>
+        <Text style={{ color: "#fff", marginLeft: 12, fontWeight: "600", flex: 1 }} numberOfLines={1}>
+          {titleLabel}
+        </Text>
+        {isOffline ? (
+          <View style={{ backgroundColor: "#10B981", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <Ionicons name="cloud-offline" size={12} color="#fff" />
+            <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>OFFLINE</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={{ width, height: width * (9 / 16), backgroundColor: "#000" }}>
+        {isLoading ? (
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+            <ActivityIndicator color="#fff" />
+            <Text style={{ color: "#fff", marginTop: 8 }}>{checkingLocal ? "Checking downloads…" : "Fetching stream…"}</Text>
+          </View>
+        ) : !streamUrl ? (
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 24 }}>
+            <Ionicons name="videocam-off-outline" size={48} color="#64748B" />
+            <Text style={{ color: "#94A3B8", marginTop: 12, textAlign: "center", fontSize: 15 }}>
+              Not available yet
+            </Text>
+            {errorMsg ? <Text style={{ color: "#475569", marginTop: 12, fontSize: 11, textAlign: "center" }}>{errorMsg}</Text> : null}
+          </View>
+        ) : (
+          <VideoView
+            player={player}
+            style={{ width: "100%", height: "100%" }}
+            nativeControls
+          />
+        )}
+      </View>
+
+      {!isOffline ? (
+        <View style={{ flexDirection: "row", padding: 16, gap: 8 }}>
+          {QUALITIES.map((q) => {
+            const active = q === quality;
+            return (
+              <Pressable
+                key={q}
+                onPress={() => setQuality(q)}
+                style={{
+                  paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
+                  backgroundColor: active ? "#3B82F6" : "#1E293B",
+                }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "600", fontSize: 13 }}>{q}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+
+      {streamQuery.data && streamUrl && !isOffline ? (
+        <View style={{ paddingHorizontal: 16 }}>
+          <Text style={{ color: "#94A3B8", fontSize: 12 }}>
+            Quality: {streamQuery.data.quality || quality}
+            {streamQuery.data.size ? ` · Size: ${streamQuery.data.size} MB` : ""}
+            {streamQuery.data.seeders != null ? ` · Seeders: ${streamQuery.data.seeders}` : ""}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}

@@ -1,0 +1,81 @@
+import { ScrollView, View, Text, ActivityIndicator, RefreshControl } from "react-native";
+import { useQuery } from "@tanstack/react-query";
+import { api, pickList, API_URL } from "../../src/services/api";
+import HeroSection from "../../components/HeroSection";
+import MovieRow from "../../components/MovieRow";
+import QuickStats from "../../components/home/QuickStats";
+import AppHeader from "../../components/layout/AppHeader";
+
+async function j(path: string) {
+  const r = await fetch(`${API_URL}${path}`);
+  return r.json();
+}
+
+export default function HomeScreen() {
+  const trending = useQuery({ queryKey: ["trending"], queryFn: api.trending });
+  const movies = useQuery({ queryKey: ["movies"], queryFn: () => api.movies(1) });
+  const series = useQuery({ queryKey: ["series"], queryFn: () => api.series(1) });
+  const popular = useQuery({ queryKey: ["home-popular"], queryFn: () => j("/api/popular?type=movie") });
+  const topRated = useQuery({ queryKey: ["home-top-rated"], queryFn: () => j("/api/top-rated?type=movie") });
+  const kdrama = useQuery({
+    queryKey: ["home-kdrama"],
+    queryFn: async () => {
+      const r = await fetch("{API_URL}/api/tv-shows?with_original_language=ko&page=1");
+      return r.json();
+    },
+  });
+
+  const allQueries = [trending, movies, series, popular, topRated, kdrama];
+  const loading = trending.isLoading || movies.isLoading;
+  const onRefresh = () => allQueries.forEach((q) => q.refetch());
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F8FAFC" }}>
+        <ActivityIndicator size="large" color="#3B82F6" />
+        <Text style={{ color: "#64748B", marginTop: 12 }}>Loading your entertainment…</Text>
+      </View>
+    );
+  }
+
+  const trendingList = pickList(trending.data);
+  const moviesList = pickList(movies.data);
+  const seriesList = pickList(series.data).map((s: any) => ({ ...s, type: "tv" }));
+  const popularList = pickList(popular.data);
+  const topRatedList = pickList(topRated.data);
+  const kdramaList = pickList(kdrama.data).map((s: any) => ({ ...s, type: "tv" }));
+
+  const heroPool = trendingList.length >= 2 ? trendingList
+    : popularList.length >= 2 ? popularList
+    : topRatedList.length >= 2 ? topRatedList
+    : [...trendingList, ...popularList, ...topRatedList];
+
+  return (
+    <View style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+      <AppHeader />
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        refreshControl={<RefreshControl refreshing={false} onRefresh={onRefresh} tintColor="#3B82F6" />}
+      >
+        <HeroSection movie={heroPool[0]} />
+
+        <QuickStats
+          stats={[
+            { icon: "trending-up", color: "#3B82F6", label: "Trending Now", value: `${trendingList.length}+` },
+            { icon: "star", color: "#F59E0B", label: "Top Rated", value: `${topRatedList.length}+` },
+            { icon: "film", color: "#8B5CF6", label: "Movies", value: moviesList.length },
+            { icon: "tv", color: "#10B981", label: "Series", value: seriesList.length },
+          ]}
+        />
+
+        {/* Row order: fresh → established */}
+        <MovieRow title="Trending Now" icon="flame" movies={trendingList} autoScroll scrollInterval={5000} />
+        <MovieRow title="Popular Movies" icon="film" movies={popularList.length ? popularList : moviesList} autoScroll scrollInterval={4500} />
+        <MovieRow title="Popular Series" icon="tv" movies={seriesList} autoScroll scrollInterval={5000} />
+        <MovieRow title="Popular K-Drama" icon="heart" movies={kdramaList} autoScroll scrollInterval={5500} />
+        <MovieRow title="Top Rated of All Time" icon="trophy" movies={topRatedList} autoScroll={false} />
+      </ScrollView>
+    </View>
+  );
+}

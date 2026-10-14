@@ -1,0 +1,1 @@
+// Append these methods inside the `api` object in src/services/api.ts

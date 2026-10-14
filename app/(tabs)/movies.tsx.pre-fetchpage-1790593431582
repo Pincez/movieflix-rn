@@ -1,0 +1,65 @@
+import { useState } from "react";
+import { View, Text } from "react-native";
+import MediaGrid from "../../components/grid/MediaGrid";
+import GenreFilter, { GenreChip } from "../../components/grid/GenreFilter";
+import { API_URL } from "../../src/services/api";
+
+const GENRES: GenreChip[] = [
+  { id: 28, name: "Action" },
+  { id: 35, name: "Comedy" },
+  { id: 16, name: "Animation" },
+  { id: 27, name: "Horror" },
+  { id: 10749, name: "Romance" },
+  { id: 878, name: "Sci-Fi" },
+  { id: 53, name: "Thriller" },
+  { id: 18, name: "Drama" },
+  { id: 80, name: "Crime" },
+  { id: 12, name: "Adventure" },
+  { id: 14, name: "Fantasy" },
+  { id: 9648, name: "Mystery" },
+  { id: 10751, name: "Family" },
+];
+
+export default function MoviesScreen() {
+  const [genre, setGenre] = useState<number | string | null>(null);
+
+  const fetchPage = async (page: number) => {
+    const params = new URLSearchParams();
+    params.append("page", String(page));
+    if (genre != null) params.append("with_genres", String(genre));
+    const r = await fetch(`${API_URL}/api/movies?${params.toString()}`);
+    return r.json();
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
+      <View style={{ paddingTop: 56 }}>
+        <Text
+          style={{
+            fontSize: 26,
+            fontWeight: "800",
+            color: "#0F172A",
+            letterSpacing: -0.5,
+            paddingHorizontal: 16,
+            marginBottom: 14,
+          }}
+        >
+          Movies
+        </Text>
+
+        <GenreFilter genres={GENRES} selectedId={genre} onSelect={setGenre} accent="#3B82F6" />
+
+        <View style={{ height: 12 }} />
+      </View>
+
+      <View style={{ flex: 1 }}>
+        <MediaGrid
+          key={`movies-${genre ?? "all"}`}
+          fetchPage={fetchPage}
+          queryKey="movie"
+          emptyText="No movies found"
+        />
+      </View>
+    </View>
+  );
+}

@@ -1,0 +1,73 @@
+import { View, Text, Pressable } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { router, useLocalSearchParams } from "expo-router";
+import MediaGrid from "../../components/grid/MediaGrid";
+import { API_URL } from "../../src/services/api";
+
+type CategoryDef = {
+  title: string;
+  endpoint: string; // path WITHOUT ?page= — we add it in fetchPage
+};
+
+const CATEGORIES: Record<string, CategoryDef> = {
+  // Movies
+  "trending":            { title: "Trending Now",        endpoint: "/api/trending" },
+  "popular-movies":      { title: "Popular Movies",      endpoint: "/api/movies?type=popular&sort_by=popularity.desc" },
+  "top-rated":           { title: "Top Rated Movies",    endpoint: "/api/movies?type=top_rated&sort_by=vote_average.desc" },
+  "now-playing":         { title: "Now Playing",         endpoint: "/api/movies?type=now_playing" },
+  "upcoming":            { title: "Coming Soon",         endpoint: "/api/movies?type=upcoming" },
+  "animation":           { title: "Animation",           endpoint: "/api/movies?with_genres=16&sort_by=popularity.desc" },
+  "action":              { title: "Action",              endpoint: "/api/movies?with_genres=28&sort_by=popularity.desc" },
+  "comedy":              { title: "Comedy",              endpoint: "/api/movies?with_genres=35&sort_by=popularity.desc" },
+  "horror":              { title: "Horror",              endpoint: "/api/movies?with_genres=27&sort_by=popularity.desc" },
+  "romance":             { title: "Romance",             endpoint: "/api/movies?with_genres=10749&sort_by=popularity.desc" },
+  "sci-fi":              { title: "Sci-Fi",              endpoint: "/api/movies?with_genres=878&sort_by=popularity.desc" },
+  "thriller":            { title: "Thriller",            endpoint: "/api/movies?with_genres=53&sort_by=popularity.desc" },
+  "drama":               { title: "Drama",               endpoint: "/api/movies?with_genres=18&sort_by=popularity.desc" },
+  "african-movies":      { title: "African Movies",      endpoint: "/api/movies?with_origin_country=NG&sort_by=popularity.desc" },
+
+  // TV
+  "popular-series":      { title: "Popular Series",      endpoint: "/api/tv-shows?type=popular&sort_by=popularity.desc" },
+  "top-rated-tv":        { title: "Top Rated Series",    endpoint: "/api/tv-shows?type=top_rated&sort_by=vote_average.desc" },
+  "kdrama":              { title: "Korean Drama",        endpoint: "/api/tv-shows?with_original_language=ko&sort_by=popularity.desc" },
+  "anime":               { title: "Anime",               endpoint: "/api/tv-shows?with_genres=16&with_original_language=ja&sort_by=popularity.desc" },
+  "tv-comedy":           { title: "TV Comedy",           endpoint: "/api/tv-shows?with_genres=35&sort_by=popularity.desc" },
+  "tv-drama":            { title: "TV Drama",            endpoint: "/api/tv-shows?with_genres=18&sort_by=popularity.desc" },
+};
+
+export default function CategoryScreen() {
+  const { key } = useLocalSearchParams<{ key: string }>();
+  const def = CATEGORIES[key || ""] || {
+    title: "Category",
+    endpoint: "/api/movies?type=popular",
+  };
+
+  const fetchPage = async (page: number) => {
+    const sep = def.endpoint.includes("?") ? "&" : "?";
+    const url = `${API_URL}${def.endpoint}${sep}page=${page}`;
+    console.log(`[category:${key}] fetching ${url}`);
+    const r = await fetch(url);
+    return r.json();
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: "#F8FAFC", paddingTop: 56 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, marginBottom: 12 }}>
+        <Pressable onPress={() => (router.canGoBack?.() ? router.back() : router.replace("/"))} hitSlop={12}>
+          <Ionicons name="arrow-back" size={24} color="#0F172A" />
+        </Pressable>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: "#0F172A", marginLeft: 12 }}>
+          {def.title}
+        </Text>
+      </View>
+
+      <MediaGrid
+        key={key}
+        fetchPage={fetchPage}
+        queryKey={key || "category"}
+        emptyText="Nothing here yet"
+        columns={2}
+      />
+    </View>
+  );
+}

@@ -1,0 +1,423 @@
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
+import { create } from "zustand";
+import { API_URL } from "./api";
+import { Platform } from "react-native";
+
+const IS_WEB = Platform.OS === "web";
+
+// ============================================================
+// Types
+// ============================================================
+export interface DownloadItem {
+  id: string;              // `${hash}:${fileId}`
+  hash: string;
+  fileId: number;
+  torrentId: number;
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+  season?: number;
+  episode?: number;
+  title: string;
+  poster?: string;
+  quality: string;
+  sizeMb: number;
+  localUri: string;        // file:///.../Downloads/<id>.mkv
+  downloadedAt: number;
+  status: "queued" | "downloading" | "completed" | "failed";
+  progress: number;        // 0–100
+  error?: string;
+}
+
+// ============================================================
+// Paths
+// ============================================================
+const BASE_DIR = `${FileSystem.documentDirectory}movieflix/`;
+const VIDEO_DIR = `${BASE_DIR}videos/`;
+const META_DIR = `${BASE_DIR}meta/`;
+
+async function ensureDirs() {
+  const info1 = await FileSystem.getInfoAsync(BASE_DIR);
+  if (!info1.exists) await FileSystem.makeDirectoryAsync(BASE_DIR, { intermediates: true });
+
+  const info2 = await FileSystem.getInfoAsync(VIDEO_DIR);
+  if (!info2.exists) await FileSystem.makeDirectoryAsync(VIDEO_DIR, { intermediates: true });
+
+  const info3 = await FileSystem.getInfoAsync(META_DIR);
+  if (!info3.exists) await FileSystem.makeDirectoryAsync(META_DIR, { intermediates: true });
+}
+
+function metaPath(id: string) { return `${META_DIR}${id}.json`; }
+function videoPath(id: string, ext: string = "mkv") { return `${VIDEO_DIR}${id}.${ext}`; }
+
+// ============================================================
+// Zustand store
+// ============================================================
+type DownloadsState = {
+  items: DownloadItem[];
+  loaded: boolean;
+  setItems: (items: DownloadItem[]) => void;
+  upsert: (item: DownloadItem) => void;
+  remove: (id: string) => void;
+  updateProgress: (id: string, progress: number, status?: DownloadItem["status"]) => void;
+};
+
+export const useDownloadsStore = create<DownloadsState>((set) => ({
+  items: [],
+  loaded: false,
+  setItems: (items) => set({ items, loaded: true }),
+  upsert: (item) =>
+    set((s) => {
+      const idx = s.items.findIndex((x) => x.id === item.id);
+      if (idx === -1) return { items: [item, ...s.items] };
+      const copy = [...s.items];
+      copy[idx] = item;
+      return { items: copy };
+    }),
+  remove: (id) => set((s) => ({ items: s.items.filter((x) => x.id !== id) })),
+  updateProgress: (id, progress, status) =>
+    set((s) => ({
+      items: s.items.map((x) =>
+        x.id === id ? { ...x, progress, status: status || x.status } : x,
+      ),
+    })),
+}));
+
+// ============================================================
+// Metadata helpers
+// ============================================================
+async function saveMeta(item: DownloadItem) {
+  await ensureDirs();
+  await FileSystem.writeAsStringAsync(metaPath(item.id), JSON.stringify(item));
+}
+
+async function loadMeta(id: string): Promise<DownloadItem | null> {
+  try {
+    const info = await FileSystem.getInfoAsync(metaPath(id));
+    if (!info.exists) return null;
+    const raw = await FileSystem.readAsStringAsync(metaPath(id));
+    return JSON.parse(raw) as DownloadItem;
+  } catch {
+    return null;
+  }
+}
+
+async function deleteMeta(id: string) {
+  try {
+    await FileSystem.deleteAsync(metaPath(id), { idempotent: true });
+  } catch {}
+}
+
+// ============================================================
+// List all downloads
+// ============================================================
+export async function loadAllDownloads(): Promise<DownloadItem[]> {
+  if (IS_WEB) return [];
+  await ensureDirs();
+  try {
+    const files = await FileSystem.readDirectoryAsync(META_DIR);
+    const items: DownloadItem[] = [];
+    for (const f of files) {
+      if (!f.endsWith(".json")) continue;
+      const id = f.replace(".json", "");
+      const item = await loadMeta(id);
+      if (!item) continue;
+
+      // Verify file still exists
+      const videoInfo = await FileSystem.getInfoAsync(item.localUri);
+      if (!videoInfo.exists) {
+        // Cleanup orphaned metadata
+        await deleteMeta(id);
+        continue;
+      }
+      items.push(item);
+    }
+    return items.sort((a, b) => b.downloadedAt - a.downloadedAt);
+  } catch {
+    return [];
+  }
+}
+
+// ============================================================
+// Download status polling
+// ============================================================
+export async function pollDownloadStatus(torrentId: number): Promise<{
+  completed: boolean;
+  files: Array<{ id: number; name: string; size: number; size_mb: number; mimetype: string }>;
+}> {
+  try {
+    const res = await fetch(`${API_URL}/api/download/status?torrent_id=${torrentId}`);
+    const data = await res.json();
+    return {
+      completed: !!data.completed,
+      files: data.files || [],
+    };
+  } catch {
+    return { completed: false, files: [] };
+  }
+}
+
+// ============================================================
+// Start a download (queue on TorBox, get file URL, save locally)
+// ============================================================
+export async function startDownload(opts: {
+  hash: string;
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+  quality: string;
+  title: string;
+  poster?: string;
+  season?: number;
+  episode?: number;
+}): Promise<void> {
+  if (IS_WEB) {
+    throw new Error("Downloads are only available in the mobile app");
+  }
+  const { hash, tmdbId, mediaType, quality, title, poster, season, episode } = opts;
+  console.log("[DL:start]", { hash, tmdbId, mediaType, quality, season, episode, IS_WEB });
+  const store = useDownloadsStore.getState();
+
+  // 1. Ask backend to prepare (TorBox queue)
+  const prepareUrl = new URL(`${API_URL}/api/download`);
+  prepareUrl.searchParams.set("hash", hash);
+  prepareUrl.searchParams.set("type", mediaType);
+  prepareUrl.searchParams.set("tmdb_id", String(tmdbId));
+  prepareUrl.searchParams.set("quality", quality);
+  if (season != null) prepareUrl.searchParams.set("season", String(season));
+  if (episode != null) prepareUrl.searchParams.set("episode", String(episode));
+
+  console.log("[DL:start] GET", prepareUrl.toString());
+  const prepRes = await fetch(prepareUrl.toString());
+  const prep = await prepRes.json();
+  console.log("[DL:start] response", prepRes.status, prep);
+
+  // TorBox doesn't have it yet — return with queued state
+  console.log("[DL:start] branch check ->", { success: prep.success, status: prep.status, filesCount: Array.isArray(prep.files) ? prep.files.length : 0, error: prep.error });
+  if (!prep.success && prep.status === "queued") {
+    const tempId = `${hash}:pending`;
+    store.upsert({
+      id: tempId,
+      hash,
+      fileId: -1,
+      torrentId: prep.torrentId,
+      tmdbId,
+      mediaType,
+      season,
+      episode,
+      title,
+      poster,
+      quality,
+      sizeMb: 0,
+      localUri: "",
+      downloadedAt: Date.now(),
+      status: "queued",
+      progress: 0,
+      error: "TorBox is preparing this download. Check back in a few minutes.",
+    });
+    return;
+  }
+
+  // Ready immediately
+  if (prep.success && Array.isArray(prep.files) && prep.files.length > 0) {
+    await finishDownload({
+      torrentId: prep.torrentId,
+      file: prep.files.find((f: any) => (f.mimetype || "").includes("video")) || prep.files[0],
+      hash, tmdbId, mediaType, quality, title, poster, season, episode,
+    });
+    return;
+  }
+
+  throw new Error(prep.error || "Download could not be started");
+}
+
+// ============================================================
+// Poll queued downloads every few seconds until ready, then save
+// ============================================================
+export async function resumeQueuedDownloads(): Promise<void> {
+  const store = useDownloadsStore.getState();
+  const queued = store.items.filter((x) => x.status === "queued" && x.torrentId > 0);
+
+  for (const item of queued) {
+    const status = await pollDownloadStatus(item.torrentId);
+    if (status.completed && status.files.length > 0) {
+      const file = status.files.find((f) => (f.mimetype || "").includes("video")) || status.files[0];
+      // Remove old queued entry
+      await deleteMeta(item.id).catch(() => {});
+      store.remove(item.id);
+      // Start actual download
+      await finishDownload({
+        torrentId: item.torrentId,
+        file,
+        hash: item.hash,
+        tmdbId: item.tmdbId,
+        mediaType: item.mediaType,
+        quality: item.quality,
+        title: item.title,
+        poster: item.poster,
+        season: item.season,
+        episode: item.episode,
+      });
+    }
+  }
+}
+
+// ============================================================
+// Actually download the file
+// ============================================================
+async function finishDownload(opts: {
+  torrentId: number;
+  file: { id: number; name: string; size_mb?: number; size?: number };
+  hash: string;
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+  quality: string;
+  title: string;
+  poster?: string;
+  season?: number;
+  episode?: number;
+}) {
+  const { torrentId, file, hash, tmdbId, mediaType, quality, title, poster, season, episode } = opts;
+  const store = useDownloadsStore.getState();
+
+  const id = `${hash}:${file.id}`;
+  await ensureDirs();
+
+  // Determine extension from filename
+  const ext = (file.name.split(".").pop() || "mkv").toLowerCase();
+  const localUri = videoPath(id, ext);
+
+  // Create initial "downloading" entry
+  const downloadItem: DownloadItem = {
+    id,
+    hash,
+    fileId: file.id,
+    torrentId,
+    tmdbId,
+    mediaType,
+    season,
+    episode,
+    title,
+    poster,
+    quality,
+    sizeMb: file.size_mb || Math.round((file.size || 0) / 1024 / 1024),
+    localUri,
+    downloadedAt: Date.now(),
+    status: "downloading",
+    progress: 0,
+  };
+  store.upsert(downloadItem);
+  await saveMeta(downloadItem);
+
+  // 1. Get the proxied download URL from backend
+  const fileRes = await fetch(
+    `${API_URL}/api/download/file?torrent_id=${torrentId}&file_id=${file.id}`,
+  );
+  const fileData = await fileRes.json();
+  if (!fileData.success || !fileData.downloadUrl) {
+    const failed = { ...downloadItem, status: "failed" as const, error: fileData.error || "Could not get download URL" };
+    store.upsert(failed);
+    await saveMeta(failed);
+    throw new Error(fileData.error || "Could not get download URL");
+  }
+
+  // 2. Download to local file with progress
+  const downloadResumable = FileSystem.createDownloadResumable(
+    fileData.downloadUrl,
+    localUri,
+    {},
+    (progress) => {
+      const total = progress.totalBytesExpectedToWrite || 1;
+      const pct = Math.min(99, Math.round((progress.totalBytesWritten / total) * 100));
+      store.updateProgress(id, pct, "downloading");
+    },
+  );
+
+  try {
+    const result = await downloadResumable.downloadAsync();
+    if (!result || !result.uri) throw new Error("Download did not complete");
+
+    const done = {
+      ...downloadItem,
+      status: "completed" as const,
+      progress: 100,
+      localUri: result.uri,
+      downloadedAt: Date.now(),
+    };
+    store.upsert(done);
+    await saveMeta(done);
+  } catch (err: any) {
+    const failed = { ...downloadItem, status: "failed" as const, error: err?.message || "Download failed" };
+    store.upsert(failed);
+    await saveMeta(failed);
+    throw err;
+  }
+}
+
+// ============================================================
+// Delete a download
+// ============================================================
+export async function deleteDownload(id: string): Promise<void> {
+  const store = useDownloadsStore.getState();
+  const item = store.items.find((x) => x.id === id);
+  if (item?.localUri) {
+    try {
+      await FileSystem.deleteAsync(item.localUri, { idempotent: true });
+    } catch {}
+  }
+  await deleteMeta(id);
+  store.remove(id);
+}
+
+// ============================================================
+// Export (share sheet)
+// ============================================================
+export async function exportDownload(id: string): Promise<void> {
+  const store = useDownloadsStore.getState();
+  const item = store.items.find((x) => x.id === id);
+  if (!item) throw new Error("Download not found");
+  if (item.status !== "completed") throw new Error("Download not complete yet");
+
+  const available = await Sharing.isAvailableAsync();
+  if (!available) throw new Error("Sharing is not available on this device");
+
+  await Sharing.shareAsync(item.localUri, {
+    mimeType: "video/*",
+    dialogTitle: "Export " + item.title,
+    UTI: "public.movie",
+  });
+}
+
+// ============================================================
+// Get local URI for offline playback
+// ============================================================
+export async function getLocalVideoUri(hash: string, fileId?: number): Promise<string | null> {
+  const store = useDownloadsStore.getState();
+  const candidates = store.items.filter(
+    (x) =>
+      x.hash.toLowerCase() === hash.toLowerCase() &&
+      x.status === "completed" &&
+      (fileId == null || x.fileId === fileId),
+  );
+  return candidates.length > 0 ? candidates[0].localUri : null;
+}
+
+// ============================================================
+// Find a completed download for a tmdbId (loose match)
+// ============================================================
+export function findDownloadForTitle(
+  tmdbId: number,
+  mediaType: "movie" | "tv",
+  season?: number,
+  episode?: number,
+): DownloadItem | null {
+  const store = useDownloadsStore.getState();
+  const match = store.items.find(
+    (x) =>
+      x.tmdbId === tmdbId &&
+      x.mediaType === mediaType &&
+      x.status === "completed" &&
+      (season == null || x.season === season) &&
+      (episode == null || x.episode === episode),
+  );
+  return match || null;
+}

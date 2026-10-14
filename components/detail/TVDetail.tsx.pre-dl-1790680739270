@@ -1,0 +1,846 @@
+import { useMemo, useState } from "react";
+import { View, Text, ScrollView, Pressable, ActivityIndicator } from "react-native";
+import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from "@expo/vector-icons";
+import { router, useLocalSearchParams } from "expo-router";
+import { useQuery } from "@tanstack/react-query";
+import * as Haptics from "expo-haptics";
+import { api, MovieHash } from "../../src/services/api";
+import { useAuth } from "../../src/context/AuthContext";
+import TrailerPlayer from "../TrailerPlayer";
+import DownloadButton from "../download/DownloadButton";
+
+const PLACEHOLDER = "https://via.placeholder.com/500x750?text=No+Poster";
+
+function sortByScore(list: MovieHash[]): MovieHash[] {
+  return [...list].sort((a, b) => {
+    const aScore = (a.is_cached ? 1000 : 0) + (a.seeders || 0);
+    const bScore = (b.is_cached ? 1000 : 0) + (b.seeders || 0);
+    return bScore - aScore;
+  });
+}
+
+export default function TVDetail() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { currentUser, getAuthHeaders } = useAuth();
+  const [trailerOpen, setTrailerOpen] = useState(false);
+  const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
+  const [browsingEpisode, setBrowsingEpisode] = useState<{ episode_number: number; hashes: MovieHash[] } | null>(null);
+  const [browsingPack, setBrowsingPack] = useState<{ season: number; packs: MovieHash[] } | null>(null);
+
+  // Season pack episode picker
+  const [packPicker, setPackPicker] = useState<{ hash: string; quality: string } | null>(null);
+  const [packFiles, setPackFiles] = useState<MovieHash[]>([]);
+  const [packLoading, setPackLoading] = useState(false);
+
+  const detail = useQuery({
+    queryKey: ["tv-detail", id],
+    queryFn: () => api.detail("tv", id),
+    enabled: !!id,
+  });
+
+  const videos = useQuery({
+    queryKey: ["tv-videos", id],
+    queryFn: () => api.tvVideos(id!),
+    enabled: !!id,
+    retry: 0,
+  });
+
+  const similar = useQuery({
+    queryKey: ["tv-similar", id],
+    queryFn: () => api.tvSimilar(id!),
+    enabled: !!id,
+    retry: 0,
+  });
+
+  const packsQuery = useQuery({
+    queryKey: ["tv-packs", id],
+    queryFn: () => api.tvSeasonPacks(id!),
+    enabled: !!id,
+    retry: 0,
+  });
+
+  const hashesQuery = useQuery({
+    queryKey: ["tv-hashes", id],
+    queryFn: () => api.tvEpisodeHashes(id!),
+    enabled: !!id,
+    retry: 0,
+  });
+
+  const item = detail.data as any;
+
+  const trailer = useMemo(() => {
+    const list = videos.data?.videos || [];
+    return (
+      list.find((v: any) => v.type === "Trailer" && v.site === "YouTube") ||
+      list.find((v: any) => v.site === "YouTube") ||
+      null
+    );
+  }, [videos.data]);
+
+  // ---- Packs indexed by season ----
+  const packsBySeason = useMemo(() => {
+    const map = new Map<number, MovieHash[]>();
+    const seasons = packsQuery.data?.seasons || [];
+    for (const s of seasons) {
+      const seasonNum = s.season_number;
+      const list: MovieHash[] = (s.packs || []).map((p: any) => ({
+        id: p.id,
+        hash: p.info_hash,
+        info_hash: p.info_hash,
+        quality: p.quality || "1080p",
+        size_mb: p.size_mb || 0,
+        seeders: p.seeders || 0,
+        is_cached: p.is_cached || 0,
+        episode_count: p.episode_count || 0,
+        season_number: seasonNum,
+        isSeasonPack: true,
+      }));
+      map.set(seasonNum, list);
+    }
+    return map;
+  }, [packsQuery.data]);
+
+  // ---- Episode hashes grouped by season → episode ----
+  const episodesBySeason = useMemo(() => {
+    const map = new Map<number, Map<number, MovieHash[]>>();
+    for (const h of hashesQuery.data || []) {
+      const s = h.season_number ?? 1;
+      const e = h.episode_number ?? 1;
+      if (!map.has(s)) map.set(s, new Map());
+      const epMap = map.get(s)!;
+      if (!epMap.has(e)) epMap.set(e, []);
+      epMap.get(e)!.push(h);
+    }
+    return map;
+  }, [hashesQuery.data]);
+
+  // ---- Available seasons ----
+  const seasonsList: number[] = useMemo(() => {
+    const set = new Set<number>();
+    for (const k of packsBySeason.keys()) set.add(k);
+    for (const k of episodesBySeason.keys()) set.add(k);
+    for (const s of (item?.seasons || [])) {
+      if (s.season_number > 0) set.add(s.season_number);
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }, [packsBySeason, episodesBySeason, item]);
+
+  const activeSeason = selectedSeason ?? seasonsList[0] ?? 1;
+
+  const openPlayer = (opts: { season: number; episode: number; hash?: string; quality?: string; file_id?: number | string }) => {
+    Haptics.selectionAsync();
+    const parts = [
+      `type=tv`,
+      `season=${opts.season}`,
+      `episode=${opts.episode}`,
+      `quality=${opts.quality || "1080p"}`,
+    ];
+    if (opts.hash) parts.push(`hash=${opts.hash}`);
+    if (opts.file_id != null) parts.push(`file_id=${opts.file_id}`);
+    router.push(`/watch/${id}?${parts.join("&")}`);
+  };
+
+  const openPackPicker = async (hash: string, quality: string) => {
+    Haptics.selectionAsync();
+    setPackPicker({ hash, quality });
+    setPackLoading(true);
+    try {
+      const files = await api.torrentFiles(hash);
+      const sorted = [...files].sort((a: any, b: any) => {
+        const aMatch = a.name?.match(/[Ss](\d+)[Ee](\d+)/);
+        const bMatch = b.name?.match(/[Ss](\d+)[Ee](\d+)/);
+        const aEp = aMatch ? parseInt(aMatch[2]) : 0;
+        const bEp = bMatch ? parseInt(bMatch[2]) : 0;
+        return aEp - bEp;
+      });
+      setPackFiles(sorted);
+    } catch {
+      setPackFiles([]);
+    } finally {
+      setPackLoading(false);
+    }
+  };
+
+  const openTrailer = () => {
+    if (!trailer?.key) return;
+    Haptics.selectionAsync();
+    setTrailerOpen(true);
+  };
+
+  const toggleWatchlist = async () => {
+    if (!currentUser) { router.push("/login"); return; }
+    Haptics.selectionAsync();
+    try { await api.toggleWatchlist(Number(id), false, "tv", getAuthHeaders()); } catch {}
+  };
+  const toggleFavorites = async () => {
+    if (!currentUser) { router.push("/login"); return; }
+    Haptics.selectionAsync();
+    try { await api.toggleFavorites(Number(id), false, "tv", getAuthHeaders()); } catch {}
+  };
+
+  if (detail.isLoading) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F8FAFC" }}>
+        <ActivityIndicator size="large" color="#8B5CF6" />
+      </View>
+    );
+  }
+  if (!item) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F8FAFC" }}>
+        <Text style={{ color: "#64748B" }}>TV show not found</Text>
+      </View>
+    );
+  }
+
+  const title = item.title || item.name || "Untitled";
+  const backdrop = item.backdrop || item.backdrop_path || item.poster || item.poster_path;
+  const poster = item.poster || item.poster_path || PLACEHOLDER;
+  const year = item.year || item.first_air_date?.split("-")[0] || "N/A";
+  const rating = item.rating ?? item.vote_average ?? 0;
+  const genres = (item.genres || []).map((g: any) => (typeof g === "string" ? g : g.name)).filter(Boolean);
+
+  // Group packs by quality for the active season
+  const packsForSeason = packsBySeason.get(activeSeason) || [];
+  const packsByQuality = new Map<string, MovieHash[]>();
+  for (const p of packsForSeason) {
+    const q = p.quality || "1080p";
+    if (!packsByQuality.has(q)) packsByQuality.set(q, []);
+    packsByQuality.get(q)!.push(p);
+  }
+  const packQualities = Array.from(packsByQuality.keys()).sort((a, b) => {
+    const order = ["2160p", "1080p", "720p", "480p"];
+    return order.indexOf(a) - order.indexOf(b);
+  });
+
+  const episodesMap = episodesBySeason.get(activeSeason);
+  const episodeGroups = episodesMap
+    ? Array.from(episodesMap.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([epNum, hashes]) => ({ episode_number: epNum, hashes }))
+    : [];
+
+  const hasPacks = packsForSeason.length > 0;
+  const hasEpisodes = episodeGroups.length > 0;
+
+  return (
+    <>
+      <ScrollView style={{ flex: 1, backgroundColor: "#F8FAFC" }} contentContainerStyle={{ paddingBottom: 60 }}>
+        {/* Backdrop */}
+        <View style={{ height: 340 }}>
+          {backdrop ? (
+            <Image source={{ uri: backdrop }} style={{ width: "100%", height: "100%", opacity: 0.6 }} contentFit="cover" />
+          ) : null}
+          <LinearGradient
+            colors={["rgba(15,23,42,0.4)", "rgba(15,23,42,0.85)", "#F8FAFC"]}
+            locations={[0, 0.6, 1]}
+            style={{ position: "absolute", inset: 0 }}
+          />
+          <Pressable
+            onPress={() => (router.canGoBack?.() ? router.back() : router.replace('/'))}
+            style={{
+              position: "absolute", top: 48, left: 16,
+              width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(0,0,0,0.6)",
+              alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <Ionicons name="arrow-back" size={22} color="#fff" />
+          </Pressable>
+
+          {trailer?.key ? (
+            <Pressable
+              onPress={openTrailer}
+              style={{
+                position: "absolute", bottom: 120, right: 24,
+                flexDirection: "row", alignItems: "center", gap: 6,
+                backgroundColor: "rgba(0,0,0,0.7)", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20,
+              }}
+            >
+              <Ionicons name="play-circle" size={20} color="#EF4444" />
+              <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>Trailer</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {/* Poster + title */}
+        <View style={{ flexDirection: "row", paddingHorizontal: 16, marginTop: -140 }}>
+          <Image source={{ uri: poster }} style={{ width: 120, height: 180, borderRadius: 12, backgroundColor: "#E2E8F0" }} contentFit="cover" />
+          <View style={{ flex: 1, marginLeft: 16, paddingTop: 70 }}>
+            <Text style={{ color: "#0F172A", fontSize: 22, fontWeight: "800", lineHeight: 28 }} numberOfLines={3}>
+              {title}
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10, gap: 14 }}>
+              {rating ? (
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons name="star" size={14} color="#FACC15" />
+                  <Text style={{ color: "#0F172A", marginLeft: 4, fontWeight: "600" }}>
+                    {typeof rating === "number" ? rating.toFixed(1) : rating}
+                  </Text>
+                </View>
+              ) : null}
+              <Text style={{ color: "#64748B" }}>{year}</Text>
+              {seasonsList.length ? <Text style={{ color: "#64748B" }}>{seasonsList.length} seasons</Text> : null}
+            </View>
+          </View>
+        </View>
+
+        {/* Genres */}
+        {genres.length > 0 ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 8, marginTop: 20 }}>
+            {genres.map((g: string, i: number) => (
+              <View key={i} style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#E2E8F0", paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 }}>
+                <Text style={{ color: "#334155", fontSize: 12, fontWeight: "600" }}>{g}</Text>
+              </View>
+            ))}
+          </ScrollView>
+        ) : null}
+
+        {/* Actions */}
+        <View style={{ flexDirection: "row", paddingHorizontal: 16, marginTop: 22, gap: 10 }}>
+          <Pressable
+            onPress={() => {
+              const bestPack = sortByScore(packsForSeason)[0];
+              const bestEp = episodeGroups[0]?.hashes ? sortByScore(episodeGroups[0].hashes)[0] : undefined;
+              const src = bestPack || bestEp;
+              if (bestPack) {
+                openPackPicker(bestPack.hash, bestPack.quality);
+              } else if (bestEp) {
+                openPlayer({
+                  season: activeSeason,
+                  episode: episodeGroups[0].episode_number,
+                  hash: bestEp.hash,
+                  quality: bestEp.quality,
+                });
+              }
+            }}
+            style={({ pressed }) => ({
+              flex: 1, backgroundColor: "#8B5CF6", borderRadius: 12, paddingVertical: 14,
+              flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+              opacity: pressed ? 0.85 : 1,
+            })}
+          >
+            <Ionicons name="play" size={20} color="#fff" />
+            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>Play S{activeSeason}E1</Text>
+          </Pressable>
+
+          {trailer?.key ? (
+            <Pressable onPress={openTrailer} style={({ pressed }) => ({
+              width: 52, height: 52, borderRadius: 12, backgroundColor: "#fff",
+              borderWidth: 1, borderColor: "#E2E8F0", alignItems: "center", justifyContent: "center",
+              opacity: pressed ? 0.7 : 1,
+            })}>
+              <Ionicons name="logo-youtube" size={22} color="#EF4444" />
+            </Pressable>
+          ) : null}
+
+          <Pressable onPress={toggleWatchlist} style={({ pressed }) => ({
+            width: 52, height: 52, borderRadius: 12, backgroundColor: "#fff",
+            borderWidth: 1, borderColor: "#E2E8F0", alignItems: "center", justifyContent: "center",
+            opacity: pressed ? 0.7 : 1,
+          })}>
+            <Ionicons name="bookmark-outline" size={22} color="#0F172A" />
+          </Pressable>
+
+          <Pressable onPress={toggleFavorites} style={({ pressed }) => ({
+            width: 52, height: 52, borderRadius: 12, backgroundColor: "#fff",
+            borderWidth: 1, borderColor: "#E2E8F0", alignItems: "center", justifyContent: "center",
+            opacity: pressed ? 0.7 : 1,
+          })}>
+            <Ionicons name="heart-outline" size={22} color="#0F172A" />
+          </Pressable>
+
+          {(() => {
+            const bestPack = packsForSeason[0];
+            const firstEp = episodeGroups[0];
+            const downloadTarget = bestPack
+              ? { hash: bestPack.hash, quality: bestPack.quality, episode: 1 }
+              : firstEp && firstEp.hashes.length > 0
+                ? { hash: firstEp.hashes[0].hash, quality: firstEp.hashes[0].quality, episode: firstEp.episode_number }
+                : null;
+            if (!downloadTarget) return null;
+            return (
+              <DownloadButton
+                hash={downloadTarget.hash}
+                tmdbId={Number(id)}
+                mediaType="tv"
+                quality={downloadTarget.quality}
+                title={title}
+                poster={poster}
+                season={activeSeason}
+                episode={downloadTarget.episode}
+              />
+            );
+          })()}
+        </View>
+
+        {/* Overview */}
+        <View style={{ paddingHorizontal: 16, marginTop: 28 }}>
+          <Text style={{ color: "#0F172A", fontWeight: "800", fontSize: 17, marginBottom: 10 }}>Overview</Text>
+          <Text style={{ color: "#334155", lineHeight: 22, fontSize: 14 }}>
+            {item.overview || "No overview available."}
+          </Text>
+        </View>
+
+        {/* Seasons picker */}
+        {seasonsList.length > 0 ? (
+          <View style={{ marginTop: 32 }}>
+            <Text style={{ color: "#0F172A", fontWeight: "800", fontSize: 17, paddingHorizontal: 16, marginBottom: 12 }}>
+              Seasons
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+              {seasonsList.map((s) => {
+                const active = s === activeSeason;
+                const hasPack = (packsBySeason.get(s) || []).length > 0;
+                const hasEp = episodesBySeason.has(s);
+                return (
+                  <Pressable
+                    key={s}
+                    onPress={() => { Haptics.selectionAsync(); setSelectedSeason(s); }}
+                    style={{
+                      paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12,
+                      backgroundColor: active ? "#8B5CF6" : "#fff",
+                      borderWidth: 1.5, borderColor: active ? "#8B5CF6" : "#E2E8F0",
+                      flexDirection: "row", alignItems: "center", gap: 6,
+                    }}
+                  >
+                    <Text style={{ color: active ? "#fff" : "#334155", fontWeight: "800", fontSize: 13 }}>
+                      S{s}
+                    </Text>
+                    {hasPack ? <Ionicons name="albums" size={13} color={active ? "#fff" : "#8B5CF6"} /> : null}
+                    {!hasPack && hasEp ? <Ionicons name="film" size={13} color={active ? "#fff" : "#8B5CF6"} /> : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
+
+        {/* Season content */}
+        <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <Text style={{ color: "#0F172A", fontWeight: "800", fontSize: 17 }}>Available Sources</Text>
+            <Text style={{ color: "#64748B", fontSize: 12 }}>
+              Season {activeSeason} · {hasPacks ? `${packQualities.length} qualities` : hasEpisodes ? `${episodeGroups.length} episodes` : "none"}
+            </Text>
+          </View>
+
+          {packsQuery.isLoading || hashesQuery.isLoading ? (
+            <ActivityIndicator color="#8B5CF6" />
+          ) : !hasPacks && !hasEpisodes ? (
+            <View style={{ padding: 20, backgroundColor: "#F1F5F9", borderRadius: 14, alignItems: "center" }}>
+              <Ionicons name="cloud-offline-outline" size={32} color="#94A3B8" />
+              <Text style={{ color: "#64748B", marginTop: 8, fontSize: 13 }}>No sources yet</Text>
+              <Text style={{ color: "#94A3B8", marginTop: 4, fontSize: 11 }}>This season is being prepared</Text>
+            </View>
+          ) : hasPacks ? (
+            <>
+              <View style={{
+                padding: 12, borderRadius: 12, marginBottom: 12,
+                backgroundColor: "#F5F3FF", borderWidth: 1, borderColor: "#DDD6FE",
+                flexDirection: "row", alignItems: "center", gap: 8,
+              }}>
+                <Ionicons name="albums" size={18} color="#8B5CF6" />
+                <Text style={{ color: "#5B21B6", fontWeight: "700", fontSize: 12 }}>
+                  Full Season Pack · {packsForSeason[0]?.episode_count || 0} episodes
+                </Text>
+              </View>
+
+              {packQualities.map((quality) => {
+                const packs = sortByScore(packsByQuality.get(quality) || []);
+                const best = packs[0];
+                const playable = best && (best.seeders > 0 || best.is_cached === 1);
+                const totalSeeders = packs.reduce((s, p) => s + (p.seeders || 0), 0);
+                return (
+                  <View
+                    key={quality}
+                    style={{
+                      marginBottom: 10, padding: 14, borderRadius: 14,
+                      backgroundColor: "#fff", borderWidth: 1.5,
+                      borderColor: playable ? "#A78BFA" : "#E2E8F0",
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                          <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: "#8B5CF6" }}>
+                            <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>{quality.toUpperCase()}</Text>
+                          </View>
+                          {best?.is_cached === 1 ? (
+                            <View style={{ backgroundColor: "#DBEAFE", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                              <Text style={{ color: "#1D4ED8", fontSize: 9, fontWeight: "800" }}>CACHED</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        <Text style={{ color: "#64748B", fontSize: 11 }}>
+                          {packs.length} source{packs.length > 1 ? "s" : ""} · {totalSeeders} seeders
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                      <Pressable
+                        onPress={() => playable && openPackPicker(best.hash, quality)}
+                        disabled={!playable}
+                        style={({ pressed }) => ({
+                          flex: 1,
+                          backgroundColor: playable ? "#8B5CF6" : "#CBD5E1",
+                          borderRadius: 10, paddingVertical: 11,
+                          flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+                          opacity: pressed ? 0.85 : 1,
+                        })}
+                      >
+                        <Ionicons name="list" size={16} color="#fff" />
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>Choose Episode</Text>
+                      </Pressable>
+
+                      {packs.length > 1 ? (
+                        <Pressable
+                          onPress={() => { Haptics.selectionAsync(); setBrowsingPack({ season: activeSeason, packs }); }}
+                          style={({ pressed }) => ({
+                            paddingHorizontal: 14, paddingVertical: 11, borderRadius: 10,
+                            backgroundColor: "#F1F5F9",
+                            flexDirection: "row", alignItems: "center", gap: 6,
+                            opacity: pressed ? 0.75 : 1,
+                          })}
+                        >
+                          <Ionicons name="layers" size={14} color="#64748B" />
+                          <Text style={{ color: "#475569", fontWeight: "700", fontSize: 12 }}>
+                            {packs.length}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })}
+            </>
+          ) : (
+            <>
+              {episodeGroups.map((ep) => {
+                const best = sortByScore(ep.hashes)[0];
+                const playable = best && (best.seeders > 0 || best.is_cached === 1);
+                return (
+                  <View
+                    key={ep.episode_number}
+                    style={{
+                      marginBottom: 10, padding: 14, borderRadius: 14,
+                      backgroundColor: "#fff",
+                      borderWidth: 1.5,
+                      borderColor: playable ? "#A78BFA" : "#E2E8F0",
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 }}>
+                      <View style={{ backgroundColor: "#EDE9FE", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                        <Text style={{ color: "#6D28D9", fontWeight: "800", fontSize: 11 }}>
+                          S{String(activeSeason).padStart(2, "0")}E{String(ep.episode_number).padStart(2, "0")}
+                        </Text>
+                      </View>
+                      <Text style={{ color: "#64748B", fontSize: 11, flex: 1 }} numberOfLines={1}>
+                        {ep.hashes.length} source{ep.hashes.length > 1 ? "s" : ""}
+                        {best?.quality ? ` · ${best.quality}` : ""}
+                        {best?.seeders ? ` · ${best.seeders} seeders` : ""}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      <Pressable
+                        onPress={() => playable && openPlayer({
+                          season: activeSeason,
+                          episode: ep.episode_number,
+                          hash: best.hash,
+                          quality: best.quality,
+                        })}
+                        disabled={!playable}
+                        style={({ pressed }) => ({
+                          flex: 1, backgroundColor: playable ? "#8B5CF6" : "#CBD5E1",
+                          borderRadius: 10, paddingVertical: 10,
+                          flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+                          opacity: pressed ? 0.85 : 1,
+                        })}
+                      >
+                        <Ionicons name="play" size={14} color="#fff" />
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>
+                          {playable ? "Play Best" : "Not Ready"}
+                        </Text>
+                      </Pressable>
+
+                      {ep.hashes.length > 1 ? (
+                        <Pressable
+                          onPress={() => { Haptics.selectionAsync(); setBrowsingEpisode(ep); }}
+                          style={({ pressed }) => ({
+                            paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10,
+                            backgroundColor: "#F1F5F9",
+                            flexDirection: "row", alignItems: "center", gap: 6,
+                            opacity: pressed ? 0.75 : 1,
+                          })}
+                        >
+                          <Ionicons name="layers" size={14} color="#64748B" />
+                          <Text style={{ color: "#475569", fontWeight: "700", fontSize: 12 }}>
+                            {ep.hashes.length}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })}
+            </>
+          )}
+        </View>
+
+        {/* Similar */}
+        {similar.data?.results && similar.data.results.length > 0 ? (
+          <View style={{ marginTop: 32 }}>
+            <Text style={{ color: "#0F172A", fontWeight: "800", fontSize: 17, paddingHorizontal: 16, marginBottom: 12 }}>
+              Similar Shows
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}>
+              {similar.data.results.slice(0, 12).map((s: any) => {
+                const sid = s.tmdb_id ?? s.id;
+                const sposter = s.poster || s.poster_path || PLACEHOLDER;
+                return (
+                  <Pressable
+                    key={String(sid)}
+                    onPress={() => { Haptics.selectionAsync(); router.push(`/tv/${sid}`); }}
+                    style={({ pressed }) => ({ width: 110, opacity: pressed ? 0.75 : 1 })}
+                  >
+                    <Image
+                      source={{ uri: sposter }}
+                      style={{ width: 110, aspectRatio: 2 / 3, borderRadius: 10, backgroundColor: "#E2E8F0" }}
+                      contentFit="cover"
+                    />
+                    <Text style={{ color: "#0F172A", fontSize: 12, fontWeight: "600", marginTop: 6 }} numberOfLines={1}>
+                      {s.title || s.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
+      </ScrollView>
+
+      {/* Source browser bottom sheet */}
+      {(browsingPack || browsingEpisode) ? (
+        <SourceBrowser
+          title={
+            browsingPack
+              ? `Season ${browsingPack.season} · ${browsingPack.packs.length} sources`
+              : `S${String(activeSeason).padStart(2, "0")}E${String(browsingEpisode!.episode_number).padStart(2, "0")} · ${browsingEpisode!.hashes.length} sources`
+          }
+          hashes={browsingPack ? browsingPack.packs : browsingEpisode!.hashes}
+          onClose={() => { setBrowsingPack(null); setBrowsingEpisode(null); }}
+          onPlay={(hash) => {
+            if (browsingPack) {
+              // For pack, open the episode picker
+              openPackPicker(hash.hash, hash.quality);
+            } else {
+              openPlayer({
+                season: activeSeason,
+                episode: browsingEpisode!.episode_number,
+                hash: hash.hash,
+                quality: hash.quality,
+              });
+            }
+            setBrowsingPack(null);
+            setBrowsingEpisode(null);
+          }}
+        />
+      ) : null}
+
+      {/* Episode picker bottom sheet for season packs */}
+      {packPicker ? (
+        <View
+          style={{
+            position: "absolute",
+            inset: 0,
+            backgroundColor: "rgba(0,0,0,0.6)",
+            justifyContent: "flex-end",
+          }}
+        >
+          <Pressable style={{ flex: 1 }} onPress={() => setPackPicker(null)} />
+          <View
+            style={{
+              backgroundColor: "#fff",
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              maxHeight: "75%",
+              paddingBottom: 24,
+            }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, borderBottomWidth: 1, borderBottomColor: "#E2E8F0" }}>
+              <View>
+                <Text style={{ fontWeight: "800", color: "#0F172A", fontSize: 15 }}>
+                  Season {activeSeason} · {packPicker.quality}
+                </Text>
+                <Text style={{ color: "#64748B", fontSize: 12, marginTop: 2 }}>
+                  {packFiles.length} episodes
+                </Text>
+              </View>
+              <Pressable onPress={() => setPackPicker(null)} hitSlop={10}>
+                <Ionicons name="close" size={22} color="#64748B" />
+              </Pressable>
+            </View>
+
+            {packLoading ? (
+              <View style={{ padding: 40, alignItems: "center" }}>
+                <ActivityIndicator color="#8B5CF6" />
+                <Text style={{ color: "#64748B", marginTop: 8 }}>Loading episodes…</Text>
+              </View>
+            ) : packFiles.length === 0 ? (
+              <View style={{ padding: 40, alignItems: "center" }}>
+                <Text style={{ color: "#64748B" }}>No episodes found in this pack</Text>
+              </View>
+            ) : (
+              <ScrollView contentContainerStyle={{ padding: 16, gap: 8 }}>
+                {packFiles.map((file: any) => {
+                  const match = file.name?.match(/[Ss](\d+)[Ee](\d+)/);
+                  const epLabel = match
+                    ? `S${match[1].padStart(2, "0")}E${match[2].padStart(2, "0")}`
+                    : `Episode`;
+                  const titleMatch = file.name?.match(/[Ee]\d+\.(.+?)\.(1080p|720p|2160p|480p)/);
+                  const epTitle = titleMatch ? titleMatch[1].replace(/\./g, " ") : "";
+
+                  return (
+                    <Pressable
+                      key={file.id}
+                      onPress={() => {
+                        setPackPicker(null);
+                        openPlayer({
+                          season: activeSeason,
+                          episode: match ? parseInt(match[2]) : 1,
+                          hash: packPicker.hash,
+                          quality: packPicker.quality,
+                          file_id: file.id,
+                        });
+                      }}
+                      style={({ pressed }) => ({
+                        flexDirection: "row",
+                        alignItems: "center",
+                        padding: 14,
+                        borderRadius: 12,
+                        backgroundColor: "#F8FAFC",
+                        borderWidth: 1,
+                        borderColor: "#E2E8F0",
+                        opacity: pressed ? 0.85 : 1,
+                      })}
+                    >
+                      <View style={{ backgroundColor: "#EDE9FE", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                        <Text style={{ color: "#6D28D9", fontWeight: "800", fontSize: 12 }}>{epLabel}</Text>
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={{ color: "#0F172A", fontWeight: "600", fontSize: 13 }} numberOfLines={1}>
+                          {epTitle || `Episode ${match ? match[2] : ""}`}
+                        </Text>
+                        <Text style={{ color: "#64748B", fontSize: 11, marginTop: 2 }}>
+                          {file.size_mb ? `${file.size_mb} MB` : ""}
+                          {file.mimetype ? ` · ${file.mimetype.replace("video/", "").toUpperCase()}` : ""}
+                        </Text>
+                      </View>
+                      <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: "#8B5CF6", alignItems: "center", justifyContent: "center" }}>
+                        <Ionicons name="play" size={16} color="#fff" />
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      ) : null}
+
+      <TrailerPlayer
+        visible={trailerOpen}
+        onClose={() => setTrailerOpen(false)}
+        videoId={trailer?.key ?? null}
+        title={trailer?.name}
+        movieTitle={title}
+      />
+    </>
+  );
+}
+
+/* ---------- Source browser for browsing multiple hashes ---------- */
+function SourceBrowser({
+  title,
+  hashes,
+  onClose,
+  onPlay,
+}: {
+  title: string;
+  hashes: MovieHash[];
+  onClose: () => void;
+  onPlay: (hash: MovieHash) => void;
+}) {
+  const sorted = sortByScore(hashes);
+  return (
+    <View style={{ position: "absolute", inset: 0, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" }}>
+      <Pressable style={{ flex: 1 }} onPress={onClose} />
+      <View style={{ backgroundColor: "#fff", borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "70%", paddingBottom: 30 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, borderBottomWidth: 1, borderBottomColor: "#E2E8F0" }}>
+          <Text style={{ fontWeight: "800", color: "#0F172A", fontSize: 15 }}>{title}</Text>
+          <Pressable onPress={onClose} hitSlop={10}>
+            <Ionicons name="close" size={22} color="#64748B" />
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 8 }}>
+          {sorted.map((h, i) => {
+            const playable = h.seeders > 0 || h.is_cached === 1;
+            return (
+              <View
+                key={h.hash || i}
+                style={{
+                  padding: 12, borderRadius: 12,
+                  backgroundColor: "#fff",
+                  borderWidth: 1.5,
+                  borderColor: i === 0 && playable ? "#10B981" : "#E2E8F0",
+                  opacity: playable ? 1 : 0.5,
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: "#EDE9FE" }}>
+                      <Text style={{ color: "#6D28D9", fontWeight: "800", fontSize: 11 }}>{h.quality.toUpperCase()}</Text>
+                    </View>
+                    {h.is_cached === 1 ? (
+                      <View style={{ backgroundColor: "#DBEAFE", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                        <Text style={{ color: "#1D4ED8", fontSize: 9, fontWeight: "800" }}>CACHED</Text>
+                      </View>
+                    ) : null}
+                    {h.seeders > 0 ? (
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+                        <Ionicons name="people" size={11} color="#10B981" />
+                        <Text style={{ color: "#10B981", fontSize: 11, fontWeight: "700" }}>{h.seeders}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={{ color: "#64748B", fontSize: 11, marginTop: 6 }} numberOfLines={1}>
+                    {h.hash.slice(0, 20)}…
+                    {h.size_mb ? ` · ${Math.round(h.size_mb)} MB` : ""}
+                    {h.episode_count ? ` · ${h.episode_count} eps` : ""}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => playable && onPlay(h)}
+                  disabled={!playable}
+                  style={({ pressed }) => ({
+                    width: 40, height: 40, borderRadius: 20,
+                    backgroundColor: playable ? "#8B5CF6" : "#E2E8F0",
+                    alignItems: "center", justifyContent: "center",
+                    opacity: pressed ? 0.85 : 1,
+                  })}
+                >
+                  <Ionicons name="play" size={16} color="#fff" />
+                </Pressable>
+              </View>
+            );
+          })}
+        </ScrollView>
+      </View>
+    </View>
+  );
+}

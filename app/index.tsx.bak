@@ -1,0 +1,68 @@
+import { useEffect, useRef } from "react";
+import { View, Animated, Easing, StyleSheet } from "react-native";
+import { router } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
+import Mark from "../assets/brand/mark.svg";
+
+const BG = "#05070a";
+const MIN_SPLASH_MS = 1200;   // total time on screen, minimum
+const FADE_IN_MS = 500;
+const FADE_OUT_MS = 400;
+
+export default function SplashIndex() {
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const containerOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const startedAt = Date.now();
+
+    // 1. Fade the logo in
+    Animated.timing(logoOpacity, {
+      toValue: 1,
+      duration: FADE_IN_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+
+    // 2. Hide the native splash — after the first frame so our JS splash
+    //    is already painted underneath, giving a seamless handoff.
+    const hideNative = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, 50);
+
+    // 3. After minimum hold, fade the whole screen out and go to tabs
+    const totalDelay = Math.max(0, MIN_SPLASH_MS - (Date.now() - startedAt));
+    const proceed = setTimeout(() => {
+      Animated.timing(containerOpacity, {
+        toValue: 0,
+        duration: FADE_OUT_MS,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => {
+        router.replace("/(tabs)");
+      });
+    }, totalDelay);
+
+    return () => {
+      clearTimeout(hideNative);
+      clearTimeout(proceed);
+    };
+  }, [logoOpacity, containerOpacity]);
+
+  return (
+    <Animated.View style={[styles.container, { opacity: containerOpacity }]}>
+      <Animated.View style={{ opacity: logoOpacity }}>
+        <Mark width={200} height={200} />
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: BG,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+});

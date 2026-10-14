@@ -1,0 +1,122 @@
+import { View, Text } from "react-native";
+import Svg, {
+  Defs,
+  LinearGradient as SvgLinearGradient,
+  Stop,
+  Rect,
+  Path,
+  Polygon,
+  Circle,
+  G,
+} from "react-native-svg";
+
+/**
+ * PincezLogo — Self-contained logo with "PINCEZ TV" wordmark inside the badge.
+ * Blue → purple → pink gradient to match the app theme.
+ */
+export default function PincezLogo({ height = 40 }: { height?: number }) {
+  // aspect ratio 200 x 64
+  const width = (height / 64) * 200;
+
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center" }}>
+      <Svg width={width} height={height} viewBox="0 0 200 64" fill="none">
+        <Defs>
+          {/* Main gradient for outlines / accents */}
+          <SvgLinearGradient id="brandGrad" x1="0" y1="0" x2="200" y2="64" gradientUnits="userSpaceOnUse">
+            <Stop offset="0%" stopColor="#3B82F6" />
+            <Stop offset="50%" stopColor="#8B5CF6" />
+            <Stop offset="100%" stopColor="#EC4899" />
+          </SvgLinearGradient>
+
+          {/* Badge background */}
+          <SvgLinearGradient id="badgeBg" x1="0" y1="0" x2="200" y2="64" gradientUnits="userSpaceOnUse">
+            <Stop offset="0%" stopColor="#0B0E14" />
+            <Stop offset="100%" stopColor="#1A1F2E" />
+          </SvgLinearGradient>
+
+          {/* Inner glow on the badge */}
+          <SvgLinearGradient id="badgeGlow" x1="0" y1="0" x2="200" y2="64" gradientUnits="userSpaceOnUse">
+            <Stop offset="0%" stopColor="#3B82F6" stopOpacity={0.35} />
+            <Stop offset="50%" stopColor="#8B5CF6" stopOpacity={0.22} />
+            <Stop offset="100%" stopColor="#EC4899" stopOpacity={0.12} />
+          </SvgLinearGradient>
+        </Defs>
+
+        {/* Outer badge - rounded rect */}
+        <Rect
+          x={2} y={2} width={196} height={60} rx={14}
+          fill="url(#badgeBg)"
+          stroke="url(#brandGrad)"
+          strokeWidth={2}
+        />
+
+        {/* Inner subtle glow */}
+        <Rect x={2} y={2} width={196} height={60} rx={14} fill="url(#badgeGlow)" />
+
+        {/* ===== Left: Play triangle + P mark ===== */}
+        <G>
+          {/* Rounded square container for the P */}
+          <Rect
+            x={14} y={14} width={36} height={36} rx={9}
+            fill="url(#brandGrad)"
+            opacity={0.95}
+          />
+
+          {/* White play triangle (right half of the container) */}
+          <Polygon
+            points="26,24 26,40 38,32"
+            fill="#FFFFFF"
+            opacity={0.95}
+          />
+
+          {/* Overlaid "P" letterform (left bar) */}
+          <Rect x={21} y={22} width={3.2} height={20} rx={1.2} fill="#FFFFFF" />
+
+          {/* Scan lines inside the badge (subtle, matches your original) */}
+          <Rect x={54} y={20} width={120} height={0.8} rx={0.4} fill="#FFFFFF" opacity={0.05} />
+          <Rect x={54} y={31} width={120} height={0.8} rx={0.4} fill="#FFFFFF" opacity={0.05} />
+          <Rect x={54} y={42} width={120} height={0.8} rx={0.4} fill="#FFFFFF" opacity={0.05} />
+
+          {/* Small signal dot indicator */}
+          <Circle cx={180} cy={32} r={2.6} fill="url(#brandGrad)" />
+          <Circle cx={180} cy={32} r={5} fill="url(#brandGrad)" opacity={0.35} />
+        </G>
+
+        {/* ===== Right: PINCEZ / TV stacked wordmark (as SVG text via Path) =====
+         *  We can't rely on <Text> from react-native-svg working identically across
+         *  web + native, so we overlay RN <Text> absolutely — see below the SVG.
+         */}
+      </Svg>
+
+      {/* Wordmark overlay (uses RN <Text> for crisp rendering everywhere) */}
+      <View style={{ position: "absolute", left: width * 0.28, top: 0, bottom: 0, justifyContent: "center" }}>
+        <Text
+          style={{
+            color: "#FFFFFF",
+            fontSize: height * 0.34,
+            fontWeight: "800",
+            letterSpacing: height * 0.02,
+            lineHeight: height * 0.36,
+          }}
+        >
+          PINCEZ
+        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <Text
+            style={{
+              color: "#8B5CF6",
+              fontSize: height * 0.2,
+              fontWeight: "800",
+              letterSpacing: height * 0.06,
+              lineHeight: height * 0.22,
+            }}
+          >
+            TV
+          </Text>
+          <View style={{ width: height * 0.4, height: 1.5, backgroundColor: "#3B82F6", borderRadius: 1 }} />
+        </View>
+      </View>
+    </View>
+  );
+}
