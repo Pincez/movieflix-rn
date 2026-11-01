@@ -204,9 +204,8 @@ export default function WatchScreen() {
         style={{ flex: 1, opacity: streamUrl ? 1 : 0 }}
         nativeControls
         contentFit="contain"
-        allowsFullscreen
+        fullscreenOptions={{ enable: true }}
         allowsPictureInPicture
-        showSubtitles={true}
       />
 
       {/* ─── Loading / error overlays sit on top of the video ─── */}

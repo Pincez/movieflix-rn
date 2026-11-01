@@ -222,13 +222,10 @@ export default function SearchScreen() {
                   <Pressable
                     key={r}
                     onPress={() => runRecent(r)}
-                    style={({ pressed }) => ({
-                      flexDirection: "row", alignItems: "center", gap: 6,
+                    android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ flexDirection: "row", alignItems: "center", gap: 6,
                       backgroundColor: "#fff",
                       borderWidth: 1, borderColor: "#E2E8F0",
-                      paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20,
-                      opacity: pressed ? 0.75 : 1,
-                    })}
+                      paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20 }}
                   >
                     <Ionicons name="time-outline" size={13} color="#94A3B8" />
                     <Text style={{ color: "#334155", fontSize: 13 }}>{r}</Text>
@@ -263,7 +260,7 @@ export default function SearchScreen() {
                     const isTV = item.type === "tv" || item.media_type === "tv";
                     router.push(`/${isTV ? "tv" : "movie"}/${item.tmdb_id ?? item.id}`);
                   }}
-                  style={({ pressed }) => ({ width: 120, opacity: pressed ? 0.85 : 1 })}
+                  android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ width: 120 }}
                 >
                   <View style={{ aspectRatio: 2 / 3, borderRadius: 12, overflow: "hidden", backgroundColor: "#E2E8F0" }}>
                     <Image
@@ -328,13 +325,10 @@ function FilterChip({ label, active, onPress }: { label: string; active: boolean
         Haptics.selectionAsync();
         onPress();
       }}
-      style={({ pressed }) => ({
-        paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
+      android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
         backgroundColor: active ? "#3B82F6" : "#fff",
         borderWidth: 1.5,
-        borderColor: active ? "#3B82F6" : "#E2E8F0",
-        opacity: pressed ? 0.8 : 1,
-      })}
+        borderColor: active ? "#3B82F6" : "#E2E8F0" }}
     >
       <Text style={{ color: active ? "#fff" : "#334155", fontSize: 12, fontWeight: "700" }}>
         {label}
@@ -354,16 +348,13 @@ function ResultRow({ item, onPress }: { item: MediaItem; onPress: () => void }) 
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => ({
-        flexDirection: "row",
+      android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ flexDirection: "row",
         alignItems: "center",
         backgroundColor: "#fff",
         borderRadius: 14,
         padding: 10,
         borderWidth: 1,
-        borderColor: "#E2E8F0",
-        opacity: pressed ? 0.75 : 1,
-      })}
+        borderColor: "#E2E8F0" }}
     >
       <View style={{ width: 60, height: 90, borderRadius: 8, overflow: "hidden", backgroundColor: "#E2E8F0" }}>
         <Image source={{ uri: poster }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={150} />

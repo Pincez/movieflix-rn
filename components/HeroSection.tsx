@@ -107,25 +107,19 @@ export default function HeroSection({ movie }: { movie: any }) {
         <View style={{ flexDirection: "row", gap: 12 }}>
           <Pressable
             onPress={open}
-            style={({ pressed }) => ({
-              flexDirection: "row", alignItems: "center", gap: 8,
+            android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ flexDirection: "row", alignItems: "center", gap: 8,
               backgroundColor: "#3B82F6",
-              paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12,
-              opacity: pressed ? 0.85 : 1,
-            })}
+              paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12 }}
           >
             <Ionicons name="play" size={18} color="#fff" />
             <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>Watch Now</Text>
           </Pressable>
           <Pressable
             onPress={open}
-            style={({ pressed }) => ({
-              flexDirection: "row", alignItems: "center", gap: 8,
+            android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ flexDirection: "row", alignItems: "center", gap: 8,
               backgroundColor: "rgba(255,255,255,0.15)",
               borderWidth: 1, borderColor: "rgba(255,255,255,0.25)",
-              paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12,
-              opacity: pressed ? 0.7 : 1,
-            })}
+              paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12 }}
           >
             <Ionicons name="information-circle-outline" size={18} color="#fff" />
             <Text style={{ color: "#fff", fontWeight: "600", fontSize: 15 }}>Details</Text>

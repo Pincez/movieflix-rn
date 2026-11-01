@@ -104,7 +104,7 @@ export default function MovieRow({
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           {movies.length > 4 ? (
-            <Pressable onPress={toggleAuto} hitSlop={8} style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}>
+            <Pressable onPress={toggleAuto} hitSlop={8} android_ripple={{ color: "rgba(0,0,0,0.1)" }}>
               <Ionicons
                 name={isAutoScrolling ? "pause-circle-outline" : "play-circle-outline"}
                 size={20}
@@ -117,10 +117,7 @@ export default function MovieRow({
             <Pressable
               onPress={openCategory}
               hitSlop={8}
-              style={({ pressed }) => ({
-                flexDirection: "row", alignItems: "center", gap: 2,
-                opacity: pressed ? 0.6 : 1,
-              })}
+              android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ flexDirection: "row", alignItems: "center", gap: 2 }}
             >
               <Text style={{ color: "#3B82F6", fontSize: 13, fontWeight: "700" }}>View more</Text>
               <Ionicons name="chevron-forward" size={14} color="#3B82F6" />

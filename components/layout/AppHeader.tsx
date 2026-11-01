@@ -25,22 +25,19 @@ export default function AppHeader() {
     >
       <Pressable
         onPress={() => router.push("/")}
-        style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
+        android_ripple={{ color: "rgba(0,0,0,0.1)" }}
       >
         <PincezLogo height={44} />
       </Pressable>
 
       <Pressable
         onPress={() => router.push("/search")}
-        style={({ pressed }) => ({
-          width: 40,
+        android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ width: 40,
           height: 40,
           borderRadius: 20,
           backgroundColor: "rgba(0,0,0,0.35)",
           alignItems: "center",
-          justifyContent: "center",
-          opacity: pressed ? 0.6 : 1,
-        })}
+          justifyContent: "center" }}
       >
         <Ionicons name="search" size={20} color="#fff" />
       </Pressable>

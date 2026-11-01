@@ -40,7 +40,7 @@ export default function LoginScreen() {
             <Ionicons name="film" size={32} color="#fff" />
           </View>
           <Text style={{ fontSize: 26, fontWeight: "800", color: "#0F172A", letterSpacing: -0.5 }}>Welcome back</Text>
-          <Text style={{ color: "#64748B", marginTop: 4 }}>Log in to your MovieFlix account</Text>
+          <Text style={{ color: "#64748B", marginTop: 4 }}>Log in to your Pincez TV account</Text>
         </View>
 
         <Text style={{ color: "#334155", fontWeight: "600", marginBottom: 6 }}>Email</Text>
@@ -84,13 +84,10 @@ export default function LoginScreen() {
         <Pressable
           onPress={submit}
           disabled={busy}
-          style={({ pressed }) => ({
-            backgroundColor: busy ? "#94A3B8" : "#3B82F6",
+          android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ backgroundColor: busy ? "#94A3B8" : "#3B82F6",
             borderRadius: 12, paddingVertical: 16, marginTop: 24,
             alignItems: "center", justifyContent: "center",
-            flexDirection: "row", gap: 8,
-            opacity: pressed ? 0.85 : 1,
-          })}
+            flexDirection: "row", gap: 8 }}
         >
           {busy ? <ActivityIndicator color="#fff" /> : null}
           <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>{busy ? "Logging in…" : "Log In"}</Text>

@@ -160,14 +160,11 @@ function MediaGridInner({ fetchPage, queryKey, emptyText = "Nothing found", colu
         <Text style={{ color: "#64748B", marginTop: 12, textAlign: "center" }}>{error}</Text>
         <Pressable
           onPress={() => load(1, true)}
-          style={({ pressed }) => ({
-            marginTop: 16,
+          android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ marginTop: 16,
             backgroundColor: "#3B82F6",
             paddingHorizontal: 20,
             paddingVertical: 10,
-            borderRadius: 10,
-            opacity: pressed ? 0.8 : 1,
-          })}
+            borderRadius: 10 }}
         >
           <Text style={{ color: "#fff", fontWeight: "600" }}>Try again</Text>
         </Pressable>

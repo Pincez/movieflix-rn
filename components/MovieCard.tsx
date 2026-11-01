@@ -31,7 +31,7 @@ export default function MovieCard({ movie }: { movie: Movie }) {
   };
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1 })}>
+    <Pressable onPress={onPress} android_ripple={{ color: "rgba(0,0,0,0.1)" }}>
       <View
         style={{
           borderRadius: 14,

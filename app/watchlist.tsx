@@ -89,7 +89,7 @@ function Card({ item, width }: { item: MediaItem; width: number }) {
         Haptics.selectionAsync();
         router.push(`/${isTV ? "tv" : "movie"}/${id}`);
       }}
-      style={({ pressed }) => ({ width, opacity: pressed ? 0.85 : 1 })}
+      android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ width }}
     >
       <View style={{ aspectRatio: 2 / 3, borderRadius: 14, overflow: "hidden", backgroundColor: "#E2E8F0" }}>
         <Image source={{ uri: poster }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={150} />

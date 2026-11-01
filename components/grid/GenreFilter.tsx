@@ -66,19 +66,17 @@ function Chip({
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => ({
-        paddingHorizontal: 16,
+      android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ paddingHorizontal: 16,
         paddingVertical: 9,
         borderRadius: 20,
         backgroundColor: active ? accent : "#fff",
         borderWidth: 1.5,
         borderColor: active ? accent : "#E2E8F0",
-        opacity: pressed ? 0.7 : 1,
+        
         shadowColor: active ? accent : "transparent",
         shadowOpacity: 0.25,
         shadowRadius: 6,
-        shadowOffset: { width: 0, height: 2 },
-      })}
+        shadowOffset: { width: 0, height: 2 } }}
     >
       <Text
         style={{

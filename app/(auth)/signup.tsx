@@ -53,7 +53,7 @@ export default function SignupScreen() {
             <Ionicons name="person-add" size={32} color="#fff" />
           </View>
           <Text style={{ fontSize: 26, fontWeight: "800", color: "#0F172A", letterSpacing: -0.5 }}>Create account</Text>
-          <Text style={{ color: "#64748B", marginTop: 4 }}>Join MovieFlix in seconds</Text>
+          <Text style={{ color: "#64748B", marginTop: 4 }}>Join Pincez TV in seconds</Text>
         </View>
 
         <Text style={{ color: "#334155", fontWeight: "600", marginBottom: 6 }}>Display Name (optional)</Text>
@@ -109,13 +109,10 @@ export default function SignupScreen() {
         <Pressable
           onPress={submit}
           disabled={busy}
-          style={({ pressed }) => ({
-            backgroundColor: busy ? "#94A3B8" : "#8B5CF6",
+          android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ backgroundColor: busy ? "#94A3B8" : "#8B5CF6",
             borderRadius: 12, paddingVertical: 16, marginTop: 24,
             alignItems: "center", justifyContent: "center",
-            flexDirection: "row", gap: 8,
-            opacity: pressed ? 0.85 : 1,
-          })}
+            flexDirection: "row", gap: 8 }}
         >
           {busy ? <ActivityIndicator color="#fff" /> : null}
           <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>{busy ? "Creating…" : "Create Account"}</Text>
