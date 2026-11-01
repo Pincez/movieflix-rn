@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, Pressable, ActivityIndicator, Alert } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
+import * as Network from "expo-network";
 import {
   api,
   MediaType,
@@ -16,6 +17,7 @@ import {
 import { useAuth } from "../../src/context/AuthContext";
 import TrailerPlayer from "../TrailerPlayer";
 import DownloadButton from "../download/DownloadButton";
+import { findDownloadForTitle } from "../../src/services/downloads";
 
 const PLACEHOLDER = "https://via.placeholder.com/500x750?text=No+Poster";
 
@@ -106,8 +108,20 @@ export default function MediaDetail({ type = "movie" }: { type?: MediaType }) {
     );
   }, [videos.data]);
 
-  const openPlayer = (hash?: MovieHash, quality?: string) => {
+  const openPlayer = async (hash?: MovieHash, quality?: string) => {
     Haptics.selectionAsync();
+    const networkState = await Network.getNetworkStateAsync();
+    const isOffline = !networkState.isConnected;
+    
+    if (isOffline) {
+      const local = findDownloadForTitle(Number(id), "movie");
+      if (local) {
+        router.push(`/watch/${id}?type=movie&localId=${encodeURIComponent(local.id)}`);
+        return;
+      }
+      Alert.alert("You're offline", "Connect to the internet to stream this title, or download it first.");
+      return;
+    }
     const q = quality || activeQuality || "1080p";
     const hashParam = hash ? `&hash=${hash.hash}` : "";
     router.push(`/watch/${id}?type=movie&quality=${q}${hashParam}`);
@@ -253,27 +267,33 @@ export default function MediaDetail({ type = "movie" }: { type?: MediaType }) {
         <View style={{ flexDirection: "row", paddingHorizontal: 16, marginTop: 22 }}>
           <Pressable
             onPress={() => openPlayer()}
-            disabled={!activeQuality}
-            style={({ pressed }) => ({
+            android_ripple={{ color: "rgba(255,255,255,0.3)" }}
+            style={{
               flex: 1,
               marginRight: 8,
-              backgroundColor: activeQuality ? "#3B82F6" : "#94A3B8",
-              borderRadius: 12, paddingVertical: 14,
-              flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
-              opacity: pressed ? 0.85 : 1,
-            })}
+              height: 52,
+              backgroundColor: "#3B82F6",
+              borderRadius: 12,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+            }}
           >
             <Ionicons name="play" size={20} color="#fff" />
             <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>Watch Now</Text>
           </Pressable>
 
-          <Pressable onPress={toggleWatchlist} style={({ pressed }) => ({
-            width: 52, height: 52, borderRadius: 12, marginRight: 8,
-            backgroundColor: inWatchlist ? "#DBEAFE" : "#fff",
-            borderWidth: 1, borderColor: inWatchlist ? "#3B82F6" : "#E2E8F0",
-            alignItems: "center", justifyContent: "center",
-            opacity: pressed ? 0.7 : 1,
-          })}>
+          <Pressable 
+            onPress={toggleWatchlist} 
+            android_ripple={{ color: "rgba(0,0,0,0.1)" }}
+            style={{
+              width: 52, height: 52, borderRadius: 12, marginRight: 8,
+              backgroundColor: inWatchlist ? "#DBEAFE" : "#fff",
+              borderWidth: 1, borderColor: inWatchlist ? "#3B82F6" : "#E2E8F0",
+              alignItems: "center", justifyContent: "center",
+            }}
+          >
             <Ionicons
               name={inWatchlist ? "bookmark" : "bookmark-outline"}
               size={22}
@@ -281,13 +301,16 @@ export default function MediaDetail({ type = "movie" }: { type?: MediaType }) {
             />
           </Pressable>
 
-          <Pressable onPress={toggleFavorites} style={({ pressed }) => ({
-            width: 52, height: 52, borderRadius: 12,
-            backgroundColor: inFavorites ? "#FCE7F3" : "#fff",
-            borderWidth: 1, borderColor: inFavorites ? "#EC4899" : "#E2E8F0",
-            alignItems: "center", justifyContent: "center",
-            opacity: pressed ? 0.7 : 1,
-          })}>
+          <Pressable 
+            onPress={toggleFavorites} 
+            android_ripple={{ color: "rgba(0,0,0,0.1)" }}
+            style={{
+              width: 52, height: 52, borderRadius: 12,
+              backgroundColor: inFavorites ? "#FCE7F3" : "#fff",
+              borderWidth: 1, borderColor: inFavorites ? "#EC4899" : "#E2E8F0",
+              alignItems: "center", justifyContent: "center",
+            }}
+          >
             <Ionicons
               name={inFavorites ? "heart" : "heart-outline"}
               size={22}
@@ -319,12 +342,7 @@ export default function MediaDetail({ type = "movie" }: { type?: MediaType }) {
           ) : (
             <>
               {/* Horizontal quality chips */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: 8, paddingRight: 8, paddingBottom: 4 }}
-                style={{ marginBottom: 16 }}
-              >
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8, width: "100%" }}>
                 {qualityGroups.map((g) => {
                   const isActive = activeQuality === g.quality;
                   return (
@@ -334,20 +352,22 @@ export default function MediaDetail({ type = "movie" }: { type?: MediaType }) {
                         Haptics.selectionAsync();
                         setSelectedQuality(g.quality);
                       }}
-                      style={({ pressed }) => ({
+                      android_ripple={{ color: isActive ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.05)" }}
+                      style={{
                         paddingHorizontal: 16,
                         paddingVertical: 10,
+                        marginRight: 8,
+                        marginBottom: 8,
                         borderRadius: 12,
                         backgroundColor: isActive ? "#3B82F6" : "#fff",
                         borderWidth: 1.5,
                         borderColor: isActive ? "#3B82F6" : "#E2E8F0",
-                        opacity: pressed ? 0.8 : 1,
                         flexDirection: "row",
                         alignItems: "center",
                         gap: 6,
-                      })}
+                      }}
                     >
-                      <Text style={{ color: isActive ? "#fff" : "#334155", fontWeight: "800", fontSize: 13 }}>
+                      <Text style={{ color: isActive ? "#fff" : "#334155", fontWeight: "800", fontSize: 13 }} numberOfLines={1}>
                         {g.quality.toUpperCase()}
                       </Text>
                       <View style={{
@@ -363,7 +383,7 @@ export default function MediaDetail({ type = "movie" }: { type?: MediaType }) {
                     </Pressable>
                   );
                 })}
-              </ScrollView>
+              </View>
 
               {/* Sources for active quality */}
               {activeGroup ? (
@@ -406,7 +426,7 @@ export default function MediaDetail({ type = "movie" }: { type?: MediaType }) {
                   <Pressable
                     key={String(sid)}
                     onPress={() => { Haptics.selectionAsync(); router.push(`/movie/${sid}`); }}
-                    style={({ pressed }) => ({ width: 110, opacity: pressed ? 0.75 : 1 })}
+                    style={{ width: 110 }}
                   >
                     <Image source={{ uri: sposter }} style={{ width: 110, aspectRatio: 2 / 3, borderRadius: 10, backgroundColor: "#E2E8F0" }} contentFit="cover" transition={150} />
                     <Text style={{ color: "#0F172A", fontSize: 12, fontWeight: "600", marginTop: 6 }} numberOfLines={1}>
@@ -469,7 +489,7 @@ function SourceRow({
         borderColor: isBest ? "#3B82F6" : "#E2E8F0",
       }}
     >
-      <View style={{ flex: 1, marginRight: 8 }}>
+      <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
           {cached ? (
             <View style={{ backgroundColor: "#DBEAFE", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
@@ -495,27 +515,25 @@ function SourceRow({
         </Text>
       </View>
 
-      <Pressable
-        onPress={onPlay}
-        style={({ pressed }) => ({
-          width: 40, height: 40, borderRadius: 20,
-          backgroundColor: "#3B82F6",
-          alignItems: "center", justifyContent: "center",
-          marginRight: 8,
-          opacity: pressed ? 0.85 : 1,
-        })}
-      >
-        <Ionicons name="play" size={16} color="#fff" />
-      </Pressable>
+      <View style={{ flexDirection: "row", alignItems: "center", width: 136 }}>
+        <Pressable 
+          onPress={onPlay} 
+          android_ripple={{ color: "rgba(255,255,255,0.3)" }} 
+          style={{ width: 76, height: 48, borderRadius: 10, backgroundColor: "#3B82F6", borderWidth: 1.5, borderColor: "#1D4ED8", flexDirection: "row", alignItems: "center", justifyContent: "center", marginRight: 8 }}
+        >
+          <Ionicons name="play" size={16} color="#fff" />
+          <Text style={{ color: "#fff", fontSize: 12, fontWeight: "800", marginLeft: 5 }} numberOfLines={1}>Play</Text>
+        </Pressable>
 
-      <DownloadButton
-        hash={h.hash}
-        tmdbId={tmdbId}
-        mediaType={mediaType}
-        quality={quality}
-        title={movieTitle}
-        poster={moviePoster}
-      />
+        <DownloadButton
+          hash={h.hash}
+          tmdbId={tmdbId}
+          mediaType={mediaType}
+          quality={quality}
+          title={movieTitle}
+          poster={moviePoster}
+        />
+      </View>
     </View>
   );
 }
