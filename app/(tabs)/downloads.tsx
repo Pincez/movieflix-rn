@@ -21,7 +21,7 @@ import {
   resumeQueuedDownloads,
   cancelDownload,
   type DownloadItem,
-} from "../src/services/downloads";
+} from "../../src/services/downloads";
 
 const H_PADDING = 16;
 const GAP = 12;
