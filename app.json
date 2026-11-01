@@ -1,14 +1,15 @@
 {
   "expo": {
-    "name": "movieflix-rn",
-    "slug": "movieflix-rn",
+    "name": "Pincez TV",
+    "slug": "pincez-tv",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "scheme": "movieflix",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pintone.movieflixrn"
     },
     "android": {
       "adaptiveIcon": {
@@ -45,6 +46,7 @@
       "eas": {
         "projectId": "2054ba20-bbd5-4bb3-a458-ab8872b58c52"
       }
-    }
+    },
+    "owner": "pintone"
   }
 }

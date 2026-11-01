@@ -12,12 +12,14 @@ import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
+import * as FileSystem from "expo-file-system/legacy";
 import {
   useDownloadsStore,
   loadAllDownloads,
   deleteDownload,
   exportDownload,
   resumeQueuedDownloads,
+  cancelDownload,
   type DownloadItem,
 } from "../src/services/downloads";
 
@@ -33,6 +35,9 @@ export default function DownloadsScreen() {
   const { items, setItems } = useDownloadsStore();
   const [loading, setLoading] = useState(true);
   const [resuming, setResuming] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
+  const queuedCount = items.filter((x) => x.status === "queued").length;
+  const [totalSize, setTotalSize] = useState(0);
 
   const refresh = useCallback(async () => {
     const list = await loadAllDownloads();
@@ -46,32 +51,99 @@ export default function DownloadsScreen() {
     })();
   }, [refresh]);
 
+  useEffect(() => {
+    const total = items.reduce((sum, item) => sum + (item.sizeMb || 0), 0);
+    setTotalSize(total);
+  }, [items]);
+
+  useEffect(() => {
+    if (loading || queuedCount === 0) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        await resumeQueuedDownloads();
+        await refresh();
+        if (!cancelled) setQueueError(null);
+      } catch (e: any) {
+        if (!cancelled) {
+          setQueueError(e?.message || "Could not check queued downloads.");
+        }
+      }
+      if (!cancelled) timer = setTimeout(poll, 15_000);
+    };
+
+    timer = setTimeout(poll, 2_000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [loading, queuedCount, refresh]);
+
   const handleResume = async () => {
     setResuming(true);
     try {
       await resumeQueuedDownloads();
       await refresh();
-    } catch {}
-    setResuming(false);
+      setQueueError(null);
+    } catch (e: any) {
+      setQueueError(e?.message || "Could not resume downloads. Please try again.");
+    } finally {
+      setResuming(false);
+    }
   };
 
-  const handleDelete = (item: DownloadItem) => {
+  const handleClearAll = () => {
     Alert.alert(
-      "Delete download?",
-      `"${item.title}" will be removed from your device.`,
+      "Clear all downloads?",
+      "This will delete every downloaded file from your device.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Delete",
+          text: "Clear All",
           style: "destructive",
           onPress: async () => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            await deleteDownload(item.id);
+            for (const item of items) {
+              await deleteDownload(item.id);
+            }
             await refresh();
           },
         },
       ],
     );
+  };
+
+  const handleDelete = (item: DownloadItem) => {
+    if (item.status === "completed") {
+      Alert.alert(
+        "Delete download?",
+        `"" will be removed from your device.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: async () => {
+              await deleteDownload(item.id);
+              await refresh();
+            },
+          },
+        ],
+      );
+      return;
+    }
+    if (item.status === "downloading") {
+      (async () => {
+        await cancelDownload(item.id);
+        await refresh();
+      })();
+      return;
+    }
+    (async () => {
+      await deleteDownload(item.id);
+      await refresh();
+    })();
   };
 
   const handleExport = async (item: DownloadItem) => {
@@ -102,8 +174,6 @@ export default function DownloadsScreen() {
     );
   }
 
-  const queuedCount = items.filter((x) => x.status === "queued").length;
-
   return (
     <View style={{ flex: 1, backgroundColor: "#F8FAFC", paddingTop: 56 }}>
       {/* Header */}
@@ -114,9 +184,33 @@ export default function DownloadsScreen() {
         >
           <Ionicons name="arrow-back" size={24} color="#0F172A" />
         </Pressable>
-        <Text style={{ fontSize: 22, fontWeight: "800", color: "#0F172A", marginLeft: 12, flex: 1 }}>
-          My Downloads
-        </Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 22, fontWeight: "800", color: "#0F172A", marginLeft: 12 }}>
+            My Downloads
+          </Text>
+          {items.length > 0 && (
+            <Text style={{ fontSize: 11, color: "#64748B", marginLeft: 12, marginTop: 2 }}>
+              {totalSize.toFixed(0)} MB used · {items.length} file{items.length !== 1 ? "s" : ""}
+            </Text>
+          )}
+        </View>
+
+        {items.length > 0 ? (
+          <Pressable
+            onPress={handleClearAll}
+            android_ripple={{ color: "rgba(220,38,38,0.1)" }}
+            style={{
+              flexDirection: "row", alignItems: "center", gap: 4,
+              backgroundColor: "#FEF2F2", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+              marginRight: 8,
+            }}
+          >
+            <Ionicons name="trash-outline" size={14} color="#DC2626" />
+            <Text style={{ color: "#DC2626", fontWeight: "700", fontSize: 12 }}>
+              Clear All
+            </Text>
+          </Pressable>
+        ) : null}
 
         {queuedCount > 0 ? (
           <Pressable
@@ -134,6 +228,12 @@ export default function DownloadsScreen() {
           </Pressable>
         ) : null}
       </View>
+
+      {queueError ? (
+        <Text style={{ color: "#DC2626", fontSize: 12, marginHorizontal: H_PADDING, marginBottom: 12 }}>
+          {queueError}
+        </Text>
+      ) : null}
 
       {items.length === 0 ? (
         <View style={{ alignItems: "center", paddingTop: 60, paddingHorizontal: 24 }}>
@@ -290,11 +390,9 @@ function DownloadCard({
         <View style={{ flexDirection: "row", marginTop: 8 }}>
           <Pressable
             onPress={onExport}
-            style={({ pressed }) => ({
-              flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
+            android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
               backgroundColor: "#EFF6FF", paddingVertical: 8, borderRadius: 8,
-              marginRight: 6, opacity: pressed ? 0.85 : 1,
-            })}
+              marginRight: 6 }}
           >
             <Ionicons name="share-outline" size={14} color="#3B82F6" />
             <Text style={{ color: "#3B82F6", fontSize: 12, fontWeight: "700", marginLeft: 4 }}>
@@ -303,25 +401,20 @@ function DownloadCard({
           </Pressable>
           <Pressable
             onPress={onDelete}
-            style={({ pressed }) => ({
-              width: 36, height: 36, borderRadius: 8,
-              backgroundColor: "#FEF2F2", alignItems: "center", justifyContent: "center",
-              opacity: pressed ? 0.85 : 1,
-            })}
+            android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ width: 36, height: 36, borderRadius: 8,
+              backgroundColor: "#FEF2F2", alignItems: "center", justifyContent: "center" }}
           >
             <Ionicons name="trash-outline" size={16} color="#DC2626" />
           </Pressable>
         </View>
       ) : null}
 
-      {isFailed || isQueued ? (
+      {isFailed || isQueued || isDownloading ? (
         <Pressable
           onPress={onDelete}
-          style={({ pressed }) => ({
-            flexDirection: "row", alignItems: "center", justifyContent: "center",
+          android_ripple={{ color: "rgba(0,0,0,0.1)" }} style={{ flexDirection: "row", alignItems: "center", justifyContent: "center",
             marginTop: 8, paddingVertical: 8, borderRadius: 8,
-            backgroundColor: "#FEF2F2", opacity: pressed ? 0.85 : 1,
-          })}
+            backgroundColor: "#FEF2F2" }}
         >
           <Ionicons name="trash-outline" size={14} color="#DC2626" />
           <Text style={{ color: "#DC2626", fontSize: 12, fontWeight: "700", marginLeft: 4 }}>

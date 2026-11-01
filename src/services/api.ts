@@ -270,7 +270,7 @@ export const api = {
 
   tvEpisodeHashes: async (tmdbId: number | string): Promise<MovieHash[]> => {
     try {
-      const res = await request<{ success: boolean; hashes: any[] }>(
+      const res = await request<{ success: boolean; hashes: any[]; episodes?: any[] }>(
         `/api/tv/${tmdbId}/hashes`,
       );
       const raw = res?.episodes || res?.hashes || [];

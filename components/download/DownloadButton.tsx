@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { View, Text, Pressable, ActivityIndicator, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import {
   startDownload,
   useDownloadsStore,
-  findDownloadForTitle,
+  resumeQueuedDownloads,
   exportDownload,
   deleteDownload,
 } from "../../src/services/downloads";
@@ -19,11 +19,13 @@ type Props = {
   poster?: string;
   season?: number;
   episode?: number;
+  fileId?: number;
+  seasonPack?: boolean;
   sizeMb?: number;
 };
 
 export default function DownloadButton(props: Props) {
-  const { hash, tmdbId, mediaType, quality, title, poster, season, episode } = props;
+  const { hash, tmdbId, mediaType, quality, title, poster, season, episode, fileId, seasonPack } = props;
   const [busy, setBusy] = useState(false);
 
   const hasHash = !!hash && hash.length >= 32;
@@ -34,15 +36,39 @@ export default function DownloadButton(props: Props) {
     ? items.find(
         (x) =>
           x.hash.toLowerCase() === hash.toLowerCase() &&
-          (mediaType !== "tv" || (x.season === season && x.episode === episode)),
+          (mediaType !== "tv" || (x.season === season && x.episode === episode)) &&
+          (fileId == null || x.fileId === fileId),
       )
     : undefined;
 
   const status = existing?.status;
   const progress = existing?.progress ?? 0;
 
+  // Auto-poll while queued, so the user doesn't have to tap again
+  useEffect(() => {
+    if (status !== "queued") return;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        await resumeQueuedDownloads();
+      } catch {}
+    };
+
+    poll();
+    const interval = setInterval(() => {
+      if (!cancelled) poll();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [status]);
+
+
   const onPress = async () => {
-    console.log("[DL:press]", { hash, tmdbId, mediaType, quality, season, episode, hasHash });
+    console.log("[DL:press]", { hash, tmdbId, mediaType, quality, season, episode, fileId, seasonPack, hasHash });
     if (!hasHash) return;
     Haptics.selectionAsync();
 
@@ -77,11 +103,35 @@ export default function DownloadButton(props: Props) {
     }
 
     // Queued → tell user
-    if (status === "queued") {
-      Alert.alert(
-        "Still preparing",
-        "TorBox is fetching this torrent. Check again in a few minutes from My Downloads.",
-      );
+    if (status === "queued" && existing) {
+      setBusy(true);
+      try {
+        await resumeQueuedDownloads();
+        const updated = useDownloadsStore.getState().items.find(
+          (item) =>
+            item.hash.toLowerCase() === hash.toLowerCase() &&
+            item.mediaType === mediaType &&
+            (mediaType !== "tv" || (item.season === season && item.episode === episode)) &&
+            (fileId == null || item.fileId === fileId),
+        );
+        if (updated?.status === "failed") {
+          throw new Error(updated.error || "The download failed.");
+        }
+        if (updated?.status === "completed" || updated?.status === "downloading") {
+          Alert.alert("Download started", updated.status === "completed"
+            ? "The file is downloaded and ready offline."
+            : "The episode is now downloading. Check My Downloads for progress.");
+        } else {
+          Alert.alert(
+            "Still preparing",
+            "TorBox is still preparing this torrent. The app will check again automatically in My Downloads.",
+          );
+        }
+      } catch (e: any) {
+        Alert.alert("Download check failed", e?.message || "Could not check this download.");
+      } finally {
+        setBusy(false);
+      }
       return;
     }
 
@@ -94,9 +144,16 @@ export default function DownloadButton(props: Props) {
     // Otherwise: start fresh
     setBusy(true);
     try {
-      await startDownload({
-        hash, tmdbId, mediaType, quality, title, poster, season, episode,
-      });
+      // 15-second timeout so the spinner doesn't hang forever if the server stalls
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Server took too long. TorBox may be busy — try again in a minute.")), 15000)
+      );
+      await Promise.race([
+        startDownload({
+          hash, tmdbId, mediaType, quality, title, poster, season, episode, fileId, seasonPack,
+        }),
+        timeoutPromise,
+      ]);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -112,6 +169,7 @@ export default function DownloadButton(props: Props) {
       <View
         style={{
           width: 52, height: 52, borderRadius: 12,
+          flexShrink: 0,
           backgroundColor: "#F1F5F9",
           borderWidth: 1, borderColor: "#E2E8F0",
           alignItems: "center", justifyContent: "center",
@@ -156,18 +214,12 @@ export default function DownloadButton(props: Props) {
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => ({
-        width: 52, height: 52, borderRadius: 12,
-        backgroundColor: bg,
-        borderWidth: 1,
-        borderColor: border,
-        alignItems: "center", justifyContent: "center",
-        opacity: pressed ? 0.75 : 1,
-        position: "relative",
-      })}
+      disabled={busy}
+      android_ripple={{ color: "rgba(0,0,0,0.1)" }}
+      style={{ width: 52, height: 52, borderRadius: 12, flexShrink: 0, backgroundColor: bg, borderWidth: 1, borderColor: border, alignItems: "center", justifyContent: "center", position: "relative", opacity: busy ? 0.7 : 1 }}
     >
       {busy ? (
-        <ActivityIndicator color="#3B82F6" />
+        <ActivityIndicator color="#3B82F6" size="small" />
       ) : (
         <Ionicons name={icon} size={22} color={tint} />
       )}
