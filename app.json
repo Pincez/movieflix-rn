@@ -39,7 +39,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#05070a"
         }
-      ]
+      ],
+      "react-native-livepatch"
     ],
     "extra": {
       "router": {},

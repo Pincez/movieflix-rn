@@ -4,6 +4,12 @@ import { StatusBar } from "expo-status-bar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as SplashScreen from "expo-splash-screen";
 import { AuthProvider } from "../src/context/AuthContext";
+import { LivePatch } from "react-native-livepatch";
+
+LivePatch.configure({
+  updateUrl: "https://github.com/Pincez/movieflix-rn/releases/latest/download",
+  channel: "production",
+});
 
 // Keep the native splash visible until app/index.tsx tells it to go away.
 // This must run at module scope — before React mounts — otherwise the
