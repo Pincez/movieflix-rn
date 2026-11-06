@@ -21,3 +21,21 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# Local build artifacts & scratch
+*.apk
+*.bak
+*.bak*
+*.pre-queue
+*.pre-dl-*
+*.pre-webmatch
+*.pre-types-*
+*.pre-cols-*
+*.pre-fixes-*
+*.pre-perf-*
+*.pre-approach1-*
+*.pre-getitem-*
+*.working-fix
+=
+void
+.expo/
