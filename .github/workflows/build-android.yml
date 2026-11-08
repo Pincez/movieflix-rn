@@ -48,3 +48,16 @@ jobs:
           name: movieflix-release-apk
           path: android/app/build/outputs/apk/release/*.apk
           retention-days: 14
+
+      - name: Publish APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Android build
+          body: |
+            Automatic build from commit ${{ github.sha }}.
+            Download app-release.apk below and install it on Android.
+          files: android/app/build/outputs/apk/release/app-release.apk
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
